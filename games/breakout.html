@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Breakout</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0f0f1a;display:flex;align-items:center;justify-content:center;height:100vh;font-family:'Nunito',sans-serif;flex-direction:column;gap:12px}
+canvas{border:2px solid #0984e3;border-radius:8px;background:#1a1a2e}
+.info{color:#74b9ff;font-weight:700;font-size:16px}
+</style></head><body>
+<div class="info">Score: <span id="score">0</span> | Lives: <span id="lives">3</span></div>
+<canvas id="c" width="480" height="400"></canvas>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=c.width,H=c.height;
+const COLORS=['#ff7675','#fd79a8','#e84393','#6c5ce7','#74b9ff','#00cec9','#55efc4','#fdcb6e'];
+let paddle,ball,bricks,score,lives,running;
+
+function init(){
+    paddle={x:W/2-40,y:H-30,w:80,h:12};
+    ball={x:W/2,y:H-50,dx:3,dy:-3,r:6};
+    score=0;lives=3;running=true;
+    bricks=[];
+    for(let r=0;r<6;r++)for(let c=0;c<8;c++){
+        bricks.push({x:c*58+9,y:r*24+40,w:52,h:18,color:COLORS[r],alive:true});
+    }
+    update();render();
+}
+function render(){
+    document.getElementById('score').textContent=score;
+    document.getElementById('lives').textContent=lives;
+    ctx.fillStyle='#1a1a2e';ctx.fillRect(0,0,W,H);
+    // Bricks
+    bricks.forEach(b=>{if(b.alive){ctx.fillStyle=b.color;ctx.beginPath();ctx.roundRect(b.x,b.y,b.w,b.h,4);ctx.fill()}});
+    // Paddle
+    ctx.fillStyle='#74b9ff';ctx.beginPath();ctx.roundRect(paddle.x,paddle.y,paddle.w,paddle.h,6);ctx.fill();
+    // Ball
+    ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(ball.x,ball.y,ball.r,0,Math.PI*2);ctx.fill();
+    if(!running){ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);ctx.fillStyle='#fff';ctx.font='bold 24px Nunito';ctx.textAlign='center';
+    ctx.fillText(lives<=0?'Game Over':'You Win!',W/2,H/2);ctx.font='14px Nunito';ctx.fillText('Click to restart',W/2,H/2+30)}
+}
+function update(){
+    if(!running)return;
+    ball.x+=ball.dx;ball.y+=ball.dy;
+    if(ball.x-ball.r<=0||ball.x+ball.r>=W)ball.dx*=-1;
+    if(ball.y-ball.r<=0)ball.dy*=-1;
+    if(ball.y+ball.r>=H){lives--;if(lives<=0){running=false;render();return}ball.x=W/2;ball.y=H-50;ball.dy=-3}
+    // Paddle
+    if(ball.dy>0&&ball.y+ball.r>=paddle.y&&ball.x>=paddle.x&&ball.x<=paddle.x+paddle.w){
+        ball.dy*=-1;ball.dx+=((ball.x-(paddle.x+paddle.w/2))/paddle.w)*4;ball.y=paddle.y-ball.r;
+    }
+    // Bricks
+    bricks.forEach(b=>{
+        if(!b.alive)return;
+        if(ball.x+ball.r>b.x&&ball.x-ball.r<b.x+b.w&&ball.y+ball.r>b.y&&ball.y-ball.r<b.y+b.h){
+            b.alive=false;ball.dy*=-1;score+=10;
+        }
+    });
+    if(bricks.every(b=>!b.alive)){running=false;render();return}
+    render();requestAnimationFrame(update);
+}
+c.addEventListener('mousemove',e=>{const r=c.getBoundingClientRect();paddle.x=Math.max(0,Math.min(W-paddle.w,(e.clientX-r.left)*(W/r.width)-paddle.w/2))});
+c.addEventListener('touchmove',e=>{e.preventDefault();const r=c.getBoundingClientRect();paddle.x=Math.max(0,Math.min(W-paddle.w,(e.touches[0].clientX-r.left)*(W/r.width)-paddle.w/2))});
+c.addEventListener('click',()=>{if(!running)init()});
+init();
+</script></body></html>

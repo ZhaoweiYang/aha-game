@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aha Game - Play Free Online Games</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+</head>
+<body>
+    <header class="header">
+        <div class="container">
+            <a href="/" class="logo">
+                <span class="logo-aha">Aha</span><span class="logo-game">Game</span>
+            </a>
+            <nav class="nav">
+                <a href="#" class="nav-link active" data-category="all">All Games</a>
+                <a href="#" class="nav-link" data-category="puzzle">Puzzle</a>
+                <a href="#" class="nav-link" data-category="arcade">Arcade</a>
+                <a href="#" class="nav-link" data-category="strategy">Strategy</a>
+                <a href="#" class="nav-link" data-category="casual">Casual</a>
+            </nav>
+        </div>
+    </header>
+
+    <main class="main">
+        <div class="container">
+            <section class="hero">
+                <h1>Play Free Online Games</h1>
+                <p>Discover fun and addictive games you can play right in your browser!</p>
+            </section>
+
+            <section class="games-grid" id="gamesGrid">
+                <!-- Games will be injected by JS -->
+            </section>
+        </div>
+    </main>
+
+    <!-- Game Modal -->
+    <div class="game-modal" id="gameModal">
+        <div class="game-modal-content">
+            <div class="game-modal-header">
+                <h2 id="gameModalTitle">Game</h2>
+                <button class="modal-close" id="modalClose">&times;</button>
+            </div>
+            <div class="game-modal-body" id="gameModalBody">
+                <iframe id="gameFrame" src="" frameborder="0"></iframe>
+            </div>
+        </div>
+    </div>
+
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-brand">
+                    <span class="logo-aha">Aha</span><span class="logo-game">Game</span>
+                    <p class="footer-desc">Your destination for free online games. Play instantly, no downloads required.</p>
+                </div>
+                <div class="footer-links">
+                    <h4>Categories</h4>
+                    <a href="#">Puzzle Games</a>
+                    <a href="#">Arcade Games</a>
+                    <a href="#">Strategy Games</a>
+                    <a href="#">Casual Games</a>
+                </div>
+                <div class="footer-links">
+                    <h4>About</h4>
+                    <a href="#">About Us</a>
+                    <a href="#">Contact</a>
+                    <a href="#">Privacy Policy</a>
+                    <a href="#">Terms of Service</a>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p>&copy; 2026 <strong>Luminavora Inc</strong>. All rights reserved.</p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="js/main.js"></script>
+</body>
+</html>

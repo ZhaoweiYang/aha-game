@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Pong</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0f0f1a;display:flex;align-items:center;justify-content:center;height:100vh;font-family:'Nunito',sans-serif;flex-direction:column;gap:12px}
+canvas{border:2px solid #6c5ce7;border-radius:8px;background:#1a1a2e}
+.info{color:#a0a0b8;font-size:14px;font-weight:600}
+</style></head><body>
+<div class="info">Move mouse/touch to control | First to 5 wins</div>
+<canvas id="c" width="500" height="350"></canvas>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=c.width,H=c.height;
+let player={y:H/2-30,h:60,score:0};
+let ai={y:H/2-30,h:60,score:0};
+let ball={x:W/2,y:H/2,dx:4,dy:3,r:8};
+let paused=false;
+
+function reset(){ball.x=W/2;ball.y=H/2;ball.dx=(Math.random()>0.5?1:-1)*4;ball.dy=(Math.random()-0.5)*6}
+function draw(){
+    ctx.fillStyle='#1a1a2e';ctx.fillRect(0,0,W,H);
+    // Center line
+    ctx.setLineDash([8,8]);ctx.strokeStyle='#25254a';ctx.lineWidth=2;
+    ctx.beginPath();ctx.moveTo(W/2,0);ctx.lineTo(W/2,H);ctx.stroke();ctx.setLineDash([]);
+    // Paddles
+    ctx.fillStyle='#6c5ce7';ctx.beginPath();ctx.roundRect(15,player.y,10,player.h,5);ctx.fill();
+    ctx.fillStyle='#e17055';ctx.beginPath();ctx.roundRect(W-25,ai.y,10,ai.h,5);ctx.fill();
+    // Ball
+    ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(ball.x,ball.y,ball.r,0,Math.PI*2);ctx.fill();
+    ctx.shadowBlur=15;ctx.shadowColor='#fff';ctx.fill();ctx.shadowBlur=0;
+    // Score
+    ctx.fillStyle='#6c5ce7';ctx.font='bold 48px Nunito';ctx.textAlign='center';ctx.fillText(player.score,W/2-60,60);
+    ctx.fillStyle='#e17055';ctx.fillText(ai.score,W/2+60,60);
+    if(paused){ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);ctx.fillStyle='#fff';ctx.font='bold 24px Nunito';
+    ctx.fillText(player.score>=5?'You Win!':'AI Wins!',W/2,H/2);ctx.font='14px Nunito';ctx.fillText('Click to restart',W/2,H/2+30)}
+}
+function update(){
+    if(paused)return;
+    ball.x+=ball.dx;ball.y+=ball.dy;
+    if(ball.y-ball.r<=0||ball.y+ball.r>=H)ball.dy*=-1;
+    // Player paddle
+    if(ball.dx<0&&ball.x-ball.r<=25&&ball.y>=player.y&&ball.y<=player.y+player.h){
+        ball.dx=Math.abs(ball.dx)*1.05;ball.dy+=(ball.y-(player.y+player.h/2))*0.15;
+    }
+    // AI paddle
+    const aiTarget=ball.y-ai.h/2;
+    ai.y+=(aiTarget-ai.y)*0.08;
+    ai.y=Math.max(0,Math.min(H-ai.h,ai.y));
+    if(ball.dx>0&&ball.x+ball.r>=W-25&&ball.y>=ai.y&&ball.y<=ai.y+ai.h){
+        ball.dx=-Math.abs(ball.dx)*1.05;ball.dy+=(ball.y-(ai.y+ai.h/2))*0.15;
+    }
+    // Score
+    if(ball.x<0){ai.score++;reset();if(ai.score>=5)paused=true}
+    if(ball.x>W){player.score++;reset();if(player.score>=5)paused=true}
+    // Speed limit
+    ball.dx=Math.max(-10,Math.min(10,ball.dx));
+    ball.dy=Math.max(-8,Math.min(8,ball.dy));
+}
+c.addEventListener('mousemove',e=>{const r=c.getBoundingClientRect();player.y=Math.max(0,Math.min(H-player.h,(e.clientY-r.top)*(H/r.height)-player.h/2))});
+c.addEventListener('touchmove',e=>{e.preventDefault();const r=c.getBoundingClientRect();player.y=Math.max(0,Math.min(H-player.h,(e.touches[0].clientY-r.top)*(H/r.height)-player.h/2))});
+c.addEventListener('click',()=>{if(paused){player.score=0;ai.score=0;paused=false;reset()}});
+function loop(){update();draw();requestAnimationFrame(loop)}
+reset();loop();
+</script></body></html>

@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Sudoku</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0f0f1a;display:flex;align-items:center;justify-content:center;height:100vh;font-family:'Nunito',sans-serif;color:#fff;flex-direction:column;gap:16px}
+h1{font-size:24px;color:#00cec9}
+.board{display:grid;grid-template-columns:repeat(9,40px);border:2px solid #6c5ce7;border-radius:4px;overflow:hidden}
+.cell{width:40px;height:40px;background:#1a1a2e;border:1px solid #25254a;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;cursor:pointer;transition:background .2s}
+.cell:hover{background:#25254a}
+.cell.selected{background:#3d3d5c;box-shadow:inset 0 0 0 2px #6c5ce7}
+.cell.fixed{color:#a0a0b8;cursor:default}
+.cell.user{color:#00cec9}
+.cell.error{color:#ff7675}
+.cell:nth-child(3n){border-right:2px solid #6c5ce7}
+.cell:nth-child(n+19):nth-child(-n+27),
+.cell:nth-child(n+46):nth-child(-n+54){border-bottom:2px solid #6c5ce7}
+.numpad{display:flex;gap:6px;flex-wrap:wrap;justify-content:center}
+.numpad button{width:40px;height:40px;background:#25254a;border:none;border-radius:8px;color:#fff;font-size:18px;font-weight:700;cursor:pointer}
+.numpad button:hover{background:#6c5ce7}
+.actions{display:flex;gap:8px}
+.actions button{background:#6c5ce7;color:#fff;border:none;padding:8px 16px;border-radius:8px;font-weight:700;cursor:pointer;font-size:13px;font-family:inherit}
+.msg{height:20px;font-weight:700;color:#55efc4}
+</style></head><body>
+<h1>Sudoku</h1>
+<div class="msg" id="msg"></div>
+<div class="board" id="board"></div>
+<div class="numpad" id="numpad"></div>
+<div class="actions">
+    <button onclick="init()">New Game</button>
+    <button onclick="checkSolution()">Check</button>
+</div>
+<script>
+let puzzle,solution,userGrid,selected=-1;
+const boardEl=document.getElementById('board'),numpadEl=document.getElementById('numpad');
+
+function generatePuzzle(){
+    // Start with a valid completed board then remove cells
+    const base=[
+        [5,3,4,6,7,8,9,1,2],[6,7,2,1,9,5,3,4,8],[1,9,8,3,4,2,5,6,7],
+        [8,5,9,7,6,1,4,2,3],[4,2,6,8,5,3,7,9,1],[7,1,3,9,2,4,8,5,6],
+        [9,6,1,5,3,7,2,8,4],[2,8,7,4,1,9,6,3,5],[3,4,5,2,8,6,1,7,9]
+    ];
+    // Shuffle rows within bands, cols within stacks
+    for(let i=0;i<20;i++){
+        const band=Math.floor(Math.random()*3)*3;
+        const r1=band+Math.floor(Math.random()*3),r2=band+Math.floor(Math.random()*3);
+        [base[r1],base[r2]]=[base[r2],base[r1]];
+    }
+    // Transpose randomly
+    if(Math.random()>0.5){
+        for(let r=0;r<9;r++)for(let c=r+1;c<9;c++)[base[r][c],base[c][r]]=[base[c][r],base[r][c]];
+    }
+    solution=base.map(r=>[...r]);
+    puzzle=base.map(r=>[...r]);
+    // Remove ~45 cells
+    let removed=0;
+    while(removed<45){
+        const r=Math.floor(Math.random()*9),c=Math.floor(Math.random()*9);
+        if(puzzle[r][c]){puzzle[r][c]=0;removed++}
+    }
+}
+function init(){
+    generatePuzzle();
+    userGrid=puzzle.map(r=>[...r]);
+    selected=-1;document.getElementById('msg').textContent='';
+    render();
+}
+function render(){
+    boardEl.innerHTML='';
+    for(let r=0;r<9;r++)for(let c=0;c<9;c++){
+        const i=r*9+c,v=userGrid[r][c];
+        const isFixed=puzzle[r][c]!==0;
+        const cls=['cell'];
+        if(i===selected)cls.push('selected');
+        if(isFixed)cls.push('fixed');
+        else if(v)cls.push('user');
+        const cell=document.createElement('div');
+        cell.className=cls.join(' ');
+        cell.textContent=v||'';
+        cell.addEventListener('click',()=>{if(!isFixed){selected=i;render()}});
+        boardEl.appendChild(cell);
+    }
+}
+// Numpad
+for(let n=1;n<=9;n++){
+    const btn=document.createElement('button');btn.textContent=n;
+    btn.addEventListener('click',()=>{
+        if(selected<0)return;
+        const r=Math.floor(selected/9),c=selected%9;
+        if(puzzle[r][c])return;
+        userGrid[r][c]=n;render();
+    });
+    numpadEl.appendChild(btn);
+}
+const clrBtn=document.createElement('button');clrBtn.textContent='✕';
+clrBtn.addEventListener('click',()=>{
+    if(selected<0)return;const r=Math.floor(selected/9),c=selected%9;
+    if(puzzle[r][c])return;userGrid[r][c]=0;render();
+});
+numpadEl.appendChild(clrBtn);
+
+document.addEventListener('keydown',e=>{
+    if(selected<0)return;
+    const r=Math.floor(selected/9),c=selected%9;
+    if(puzzle[r][c])return;
+    const n=parseInt(e.key);
+    if(n>=1&&n<=9){userGrid[r][c]=n;render()}
+    if(e.key==='Backspace'||e.key==='Delete'){userGrid[r][c]=0;render()}
+});
+
+function checkSolution(){
+    let correct=true,complete=true;
+    const cells=boardEl.children;
+    for(let r=0;r<9;r++)for(let c=0;c<9;c++){
+        const i=r*9+c;
+        if(!userGrid[r][c]){complete=false;continue}
+        if(userGrid[r][c]!==solution[r][c]){
+            correct=false;cells[i].classList.add('error');
+        }
+    }
+    if(!complete)document.getElementById('msg').textContent='Fill in all cells first!';
+    else if(correct)document.getElementById('msg').textContent='🎉 Congratulations! You solved it!';
+    else document.getElementById('msg').textContent='Some cells are incorrect (highlighted in red)';
+}
+init();
+</script></body></html>

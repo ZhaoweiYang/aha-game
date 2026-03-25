@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Tic Tac Toe</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0f0f1a;display:flex;align-items:center;justify-content:center;height:100vh;font-family:'Nunito',sans-serif;color:#fff;flex-direction:column;gap:20px}
+h1{font-size:28px}
+.board{display:grid;grid-template-columns:repeat(3,100px);gap:8px}
+.cell{width:100px;height:100px;background:#25254a;border:none;border-radius:12px;font-size:42px;font-weight:900;color:#fff;cursor:pointer;transition:all .2s;display:flex;align-items:center;justify-content:center}
+.cell:hover{background:#3d3d5c;transform:scale(1.05)}
+.cell.x{color:#fd79a8}.cell.o{color:#00cec9}
+.msg{font-size:18px;font-weight:700;height:24px}
+.scores{display:flex;gap:32px;font-size:14px;font-weight:700}
+.scores span{padding:8px 16px;background:#25254a;border-radius:8px}
+button{background:#6c5ce7;color:#fff;border:none;padding:10px 24px;border-radius:8px;font-weight:700;cursor:pointer;font-size:14px;font-family:inherit}
+</style></head><body>
+<h1>Tic Tac Toe</h1>
+<div class="scores"><span style="color:#fd79a8">X: <b id="sx">0</b></span><span>Draw: <b id="sd">0</b></span><span style="color:#00cec9">O: <b id="so">0</b></span></div>
+<div class="board" id="board"></div>
+<div class="msg" id="msg">Your turn (X)</div>
+<button onclick="init()">Reset</button>
+<script>
+let board,turn,over,sx=0,so=0,sd=0;
+const WINS=[[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+const boardEl=document.getElementById('board'),msgEl=document.getElementById('msg');
+
+function init(){board=Array(9).fill('');turn='X';over=false;msgEl.textContent='Your turn (X)';render()}
+function render(){
+    boardEl.innerHTML=board.map((v,i)=>
+        `<div class="cell ${v.toLowerCase()}" onclick="play(${i})">${v}</div>`
+    ).join('');
+}
+function checkWin(p){return WINS.some(w=>w.every(i=>board[i]===p))}
+function play(i){
+    if(board[i]||over)return;
+    board[i]=turn;render();
+    if(checkWin(turn)){
+        over=true;msgEl.textContent=turn+' Wins!';
+        if(turn==='X')sx++;else so++;
+    }else if(board.every(c=>c)){
+        over=true;msgEl.textContent='Draw!';sd++;
+    }else{turn=turn==='X'?'O':'X';msgEl.textContent=`Turn: ${turn}`}
+    if(turn==='O'&&!over)setTimeout(aiMove,300);
+    document.getElementById('sx').textContent=sx;
+    document.getElementById('so').textContent=so;
+    document.getElementById('sd').textContent=sd;
+}
+function aiMove(){
+    // Simple AI: win > block > center > corner > random
+    let move=findWin('O')||findWin('X');
+    if(move===undefined){
+        if(!board[4])move=4;
+        else{const corners=[0,2,6,8].filter(i=>!board[i]);move=corners.length?corners[Math.floor(Math.random()*corners.length)]:board.findIndex(v=>!v)}
+    }
+    if(move!==undefined&&move!==-1)play(move);
+}
+function findWin(p){
+    for(const w of WINS){const vals=w.map(i=>board[i]);
+        if(vals.filter(v=>v===p).length===2&&vals.includes('')){return w[vals.indexOf('')]}}
+}
+init();
+</script></body></html>

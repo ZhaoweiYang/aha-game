@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Snake</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0f0f1a;display:flex;align-items:center;justify-content:center;height:100vh;font-family:'Nunito',sans-serif;color:#fff;flex-direction:column}
+canvas{border:2px solid #6c5ce7;border-radius:8px;background:#1a1a2e}
+.info{margin-bottom:16px;font-size:18px;font-weight:700;color:#55efc4}
+.msg{margin-top:16px;font-size:14px;color:#a0a0b8}
+.controls{display:none;margin-top:12px;gap:4px}
+.controls button{width:56px;height:56px;font-size:22px;border:none;border-radius:12px;background:#25254a;color:#fff;cursor:pointer;touch-action:manipulation}
+@media(pointer:coarse){.controls{display:grid;grid-template-columns:repeat(3,56px);grid-template-rows:repeat(2,56px);justify-items:center}}
+</style></head><body>
+<div class="info">Score: <span id="score">0</span></div>
+<canvas id="c" width="400" height="400"></canvas>
+<div class="msg" id="msg">Press any arrow key or tap to start</div>
+<div class="controls">
+    <div></div><button onclick="setDir(0,-1)">&#9650;</button><div></div>
+    <button onclick="setDir(-1,0)">&#9664;</button><button onclick="setDir(0,1)">&#9660;</button><button onclick="setDir(1,0)">&#9654;</button>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d'),scoreEl=document.getElementById('score'),msgEl=document.getElementById('msg');
+const G=20,W=c.width/G,H=c.height/G;
+let snake,food,dir,ndir,score,running,loop;
+
+function init(){
+    snake=[{x:10,y:10}];dir={x:1,y:0};ndir={...dir};score=0;running=false;
+    scoreEl.textContent=0;placeFood();draw();
+    msgEl.textContent='Press any arrow key or tap to start';
+}
+function placeFood(){
+    do{food={x:Math.floor(Math.random()*W),y:Math.floor(Math.random()*H)}}
+    while(snake.some(s=>s.x===food.x&&s.y===food.y));
+}
+function draw(){
+    ctx.fillStyle='#1a1a2e';ctx.fillRect(0,0,c.width,c.height);
+    snake.forEach((s,i)=>{ctx.fillStyle=i===0?'#55efc4':'#00b894';ctx.fillRect(s.x*G+1,s.y*G+1,G-2,G-2);ctx.beginPath();ctx.roundRect(s.x*G+1,s.y*G+1,G-2,G-2,4);ctx.fill()});
+    ctx.fillStyle='#ff7675';ctx.beginPath();ctx.arc(food.x*G+G/2,food.y*G+G/2,G/2-2,0,Math.PI*2);ctx.fill();
+}
+function step(){
+    dir={...ndir};
+    const h={x:(snake[0].x+dir.x+W)%W,y:(snake[0].y+dir.y+H)%H};
+    if(snake.some(s=>s.x===h.x&&s.y===h.y)){clearInterval(loop);msgEl.textContent='Game Over! Click/tap to restart';running=false;return}
+    snake.unshift(h);
+    if(h.x===food.x&&h.y===food.y){score++;scoreEl.textContent=score;placeFood()}
+    else snake.pop();
+    draw();
+}
+function setDir(x,y){
+    if(!running){running=true;msgEl.textContent='';loop=setInterval(step,120)}
+    if(x!==-dir.x||y!==-dir.y)ndir={x,y};
+}
+document.addEventListener('keydown',e=>{
+    if(!running&&e.key.startsWith('Arrow')){running=true;msgEl.textContent='';loop=setInterval(step,120)}
+    switch(e.key){case'ArrowUp':setDir(0,-1);break;case'ArrowDown':setDir(0,1);break;case'ArrowLeft':setDir(-1,0);break;case'ArrowRight':setDir(1,0);break}
+    e.preventDefault();
+});
+c.addEventListener('click',()=>{if(!running&&score>0||!running&&snake.length>1)init()});
+init();
+</script></body></html>
