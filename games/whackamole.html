@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Whack-a-Mole</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0f0f1a;display:flex;align-items:center;justify-content:center;height:100vh;font-family:'Nunito',sans-serif;color:#fff;flex-direction:column;gap:16px}
+h1{font-size:24px;color:#55efc4}
+.info{display:flex;gap:24px}
+.info span{background:#25254a;padding:6px 16px;border-radius:8px;font-weight:700;font-size:14px}
+.grid{display:grid;grid-template-columns:repeat(3,100px);gap:12px}
+.hole{width:100px;height:100px;background:#25254a;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:48px;transition:all .1s;border:3px solid #3d3d5c;user-select:none}
+.hole:hover{border-color:#55efc4}
+.hole.active{background:#00b894;border-color:#55efc4;transform:scale(1.1);animation:pop .2s}
+.hole.hit{background:#d63031;border-color:#ff7675;animation:shake .3s}
+@keyframes pop{0%{transform:scale(0.5)}100%{transform:scale(1.1)}}
+@keyframes shake{0%,100%{transform:rotate(0)}25%{transform:rotate(-5deg)}75%{transform:rotate(5deg)}}
+button{background:#6c5ce7;color:#fff;border:none;padding:12px 32px;border-radius:8px;font-weight:700;cursor:pointer;font-size:16px;font-family:inherit}
+.msg{font-size:16px;height:24px;font-weight:700}
+</style></head><body>
+<h1>Whack-a-Mole</h1>
+<div class="info">
+    <span>Score: <b id="score">0</b></span>
+    <span>Time: <b id="time">30</b>s</span>
+    <span>Best: <b id="best">0</b></span>
+</div>
+<div class="grid" id="grid"></div>
+<div class="msg" id="msg"></div>
+<button id="startBtn" onclick="startGame()">Start Game</button>
+<script>
+const gridEl=document.getElementById('grid');
+let score,timeLeft,moleTimer,gameTimer,activeHole,best=0,playing=false;
+
+function createGrid(){
+    gridEl.innerHTML='';
+    for(let i=0;i<9;i++){
+        const h=document.createElement('div');h.className='hole';h.dataset.i=i;
+        h.addEventListener('click',()=>whack(i));
+        h.addEventListener('touchstart',e=>{e.preventDefault();whack(i)});
+        gridEl.appendChild(h);
+    }
+}
+function startGame(){
+    if(playing)return;playing=true;score=0;timeLeft=30;activeHole=-1;
+    document.getElementById('score').textContent=0;
+    document.getElementById('msg').textContent='';
+    document.getElementById('startBtn').textContent='Playing...';
+    gameTimer=setInterval(()=>{
+        timeLeft--;document.getElementById('time').textContent=timeLeft;
+        if(timeLeft<=0)endGame();
+    },1000);
+    showMole();
+}
+function showMole(){
+    if(!playing)return;
+    const holes=gridEl.children;
+    if(activeHole>=0)holes[activeHole].classList.remove('active'),holes[activeHole].textContent='';
+    let next;do{next=Math.floor(Math.random()*9)}while(next===activeHole);
+    activeHole=next;holes[activeHole].classList.add('active');holes[activeHole].textContent='🐹';
+    moleTimer=setTimeout(()=>{
+        if(activeHole>=0){holes[activeHole].classList.remove('active');holes[activeHole].textContent=''}
+        showMole();
+    },Math.max(400,1000-score*20));
+}
+function whack(i){
+    if(!playing||i!==activeHole)return;
+    const h=gridEl.children[i];
+    h.classList.remove('active');h.classList.add('hit');h.textContent='💥';
+    score++;document.getElementById('score').textContent=score;
+    setTimeout(()=>{h.classList.remove('hit');h.textContent=''},200);
+    activeHole=-1;clearTimeout(moleTimer);showMole();
+}
+function endGame(){
+    playing=false;clearInterval(gameTimer);clearTimeout(moleTimer);
+    const holes=gridEl.children;
+    if(activeHole>=0){holes[activeHole].classList.remove('active');holes[activeHole].textContent=''}
+    activeHole=-1;best=Math.max(best,score);
+    document.getElementById('best').textContent=best;
+    document.getElementById('msg').textContent=`Game Over! Score: ${score}`;
+    document.getElementById('startBtn').textContent='Play Again';
+}
+createGrid();
+</script></body></html>

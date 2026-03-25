@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Memory Match</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0f0f1a;display:flex;align-items:center;justify-content:center;height:100vh;font-family:'Nunito',sans-serif;color:#fff;flex-direction:column;gap:16px}
+h1{font-size:24px;color:#fd79a8}
+.info{display:flex;gap:24px}
+.info span{background:#25254a;padding:6px 16px;border-radius:8px;font-weight:700;font-size:14px}
+.board{display:grid;grid-template-columns:repeat(4,80px);gap:10px}
+.card{width:80px;height:80px;border-radius:12px;cursor:pointer;font-size:36px;display:flex;align-items:center;justify-content:center;background:#6c5ce7;transition:all .3s;transform-style:preserve-3d;user-select:none}
+.card.flipped,.card.matched{background:#25254a;transform:rotateY(180deg)}
+.card.matched{background:#00b894;cursor:default}
+.card:not(.flipped):not(.matched):hover{background:#7c6cf7;transform:scale(1.05)}
+.msg{font-size:16px;height:20px;font-weight:700;color:#55efc4}
+button{background:#6c5ce7;color:#fff;border:none;padding:10px 24px;border-radius:8px;font-weight:700;cursor:pointer;font-size:14px;font-family:inherit}
+</style></head><body>
+<h1>Memory Match</h1>
+<div class="info">
+    <span>Moves: <b id="moves">0</b></span>
+    <span>Pairs: <b id="pairs">0</b>/8</span>
+</div>
+<div class="board" id="board"></div>
+<div class="msg" id="msg"></div>
+<button onclick="init()">New Game</button>
+<script>
+const emojis=['🐶','🐱','🐸','🦊','🐼','🐨','🦁','🐙'];
+let cards,flipped,matched,moves,locked;
+const boardEl=document.getElementById('board');
+
+function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a}
+function init(){
+    cards=shuffle([...emojis,...emojis]);flipped=[];matched=new Set();moves=0;locked=false;
+    document.getElementById('moves').textContent=0;document.getElementById('pairs').textContent='0';
+    document.getElementById('msg').textContent='';render();
+}
+function render(){
+    boardEl.innerHTML=cards.map((e,i)=>{
+        const isFlipped=flipped.includes(i),isMatched=matched.has(i);
+        const cls=isFlipped?'card flipped':isMatched?'card matched':'card';
+        return`<div class="${cls}" data-i="${i}" onclick="flip(${i})">${isFlipped||isMatched?e:'?'}</div>`;
+    }).join('');
+}
+function flip(i){
+    if(locked||flipped.includes(i)||matched.has(i)||flipped.length>=2)return;
+    flipped.push(i);render();
+    if(flipped.length===2){
+        moves++;document.getElementById('moves').textContent=moves;
+        locked=true;
+        setTimeout(()=>{
+            if(cards[flipped[0]]===cards[flipped[1]]){matched.add(flipped[0]);matched.add(flipped[1]);
+                document.getElementById('pairs').textContent=matched.size/2;
+                if(matched.size===cards.length)document.getElementById('msg').textContent='🎉 You Won in '+moves+' moves!';
+            }
+            flipped=[];locked=false;render();
+        },600);
+    }
+}
+init();
+</script></body></html>

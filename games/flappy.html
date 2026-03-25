@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Flappy Bird</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0f0f1a;display:flex;align-items:center;justify-content:center;height:100vh;font-family:'Nunito',sans-serif}
+canvas{border:2px solid #0984e3;border-radius:8px}
+</style></head><body>
+<canvas id="c" width="400" height="500"></canvas>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=c.width,H=c.height;
+let bird,pipes,score,frame,started,over,bestScore=0;
+
+function init(){
+    bird={x:80,y:H/2,v:0,r:16};pipes=[];score=0;frame=0;started=false;over=false;draw();
+}
+function addPipe(){
+    const gap=140,top=60+Math.random()*(H-200);
+    pipes.push({x:W,top,bot:top+gap,scored:false});
+}
+function draw(){
+    // Sky gradient
+    const grad=ctx.createLinearGradient(0,0,0,H);
+    grad.addColorStop(0,'#0984e3');grad.addColorStop(1,'#74b9ff');
+    ctx.fillStyle=grad;ctx.fillRect(0,0,W,H);
+    // Ground
+    ctx.fillStyle='#00b894';ctx.fillRect(0,H-40,W,40);
+    ctx.fillStyle='#55efc4';ctx.fillRect(0,H-40,W,4);
+    // Pipes
+    pipes.forEach(p=>{
+        ctx.fillStyle='#00b894';ctx.fillRect(p.x,0,52,p.top);ctx.fillRect(p.x,p.bot,52,H-p.bot);
+        ctx.fillStyle='#55efc4';ctx.fillRect(p.x-2,p.top-20,56,20);ctx.fillRect(p.x-2,p.bot,56,20);
+    });
+    // Bird
+    ctx.fillStyle='#fdcb6e';ctx.beginPath();ctx.arc(bird.x,bird.y,bird.r,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#e17055';ctx.beginPath();ctx.arc(bird.x+8,bird.y-4,5,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(bird.x+6,bird.y-6,4,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#2d3436';ctx.beginPath();ctx.arc(bird.x+7,bird.y-6,2,0,Math.PI*2);ctx.fill();
+    // Score
+    ctx.fillStyle='#fff';ctx.font='bold 32px Nunito';ctx.textAlign='center';ctx.fillText(score,W/2,50);
+    if(!started){ctx.font='bold 20px Nunito';ctx.fillText('Tap or Press Space',W/2,H/2+60)}
+    if(over){ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,W,H);ctx.fillStyle='#fff';ctx.font='bold 28px Nunito';ctx.textAlign='center';ctx.fillText('Game Over',W/2,H/2-20);ctx.font='18px Nunito';ctx.fillText(`Score: ${score} | Best: ${bestScore}`,W/2,H/2+20);ctx.fillText('Tap to restart',W/2,H/2+50)}
+}
+function update(){
+    if(!started||over)return;
+    bird.v+=0.5;bird.y+=bird.v;frame++;
+    if(frame%90===0)addPipe();
+    pipes.forEach(p=>{p.x-=3;
+        if(!p.scored&&p.x+52<bird.x){p.scored=true;score++}
+        if(bird.x+bird.r>p.x&&bird.x-bird.r<p.x+52&&(bird.y-bird.r<p.top||bird.y+bird.r>p.bot))die();
+    });
+    pipes=pipes.filter(p=>p.x>-60);
+    if(bird.y+bird.r>H-40||bird.y-bird.r<0)die();
+}
+function die(){over=true;bestScore=Math.max(bestScore,score)}
+function flap(){
+    if(over){init();return}
+    if(!started){started=true;addPipe()}
+    bird.v=-8;
+}
+function loop(){update();draw();requestAnimationFrame(loop)}
+document.addEventListener('keydown',e=>{if(e.key===' '||e.key==='ArrowUp'){flap();e.preventDefault()}});
+c.addEventListener('click',flap);c.addEventListener('touchstart',e=>{e.preventDefault();flap()});
+init();loop();
+</script></body></html>

@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Dino Run</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0f0f1a;display:flex;align-items:center;justify-content:center;height:100vh;font-family:'Nunito',sans-serif;flex-direction:column;gap:12px}
+canvas{border:2px solid #e17055;border-radius:8px;background:#1a1a2e}
+.info{color:#fdcb6e;font-weight:700;font-size:16px}
+</style></head><body>
+<div class="info">Score: <span id="score">0</span> | Best: <span id="best">0</span></div>
+<canvas id="c" width="600" height="250"></canvas>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=c.width,H=c.height,GROUND=H-40;
+let dino,obstacles,score,best=0,speed,frame,started,over;
+
+function init(){
+    dino={x:60,y:GROUND,w:30,h:40,vy:0,jumping:false,ducking:false};
+    obstacles=[];score=0;speed=5;frame=0;started=false;over=false;draw();
+}
+function addObstacle(){
+    const types=[
+        {w:20,h:35,y:GROUND},
+        {w:30,h:25,y:GROUND},
+        {w:15,h:45,y:GROUND},
+        {w:30,h:20,y:GROUND-50} // flying
+    ];
+    const t=types[Math.floor(Math.random()*types.length)];
+    obstacles.push({x:W+20,w:t.w,h:t.h,y:t.y});
+}
+function draw(){
+    ctx.fillStyle='#1a1a2e';ctx.fillRect(0,0,W,H);
+    // Ground
+    ctx.fillStyle='#25254a';ctx.fillRect(0,GROUND,W,H-GROUND);
+    ctx.strokeStyle='#3d3d5c';ctx.lineWidth=1;
+    for(let i=0;i<W;i+=20){ctx.beginPath();ctx.moveTo((i-frame*2%20+20)%W+0,GROUND);ctx.lineTo((i-frame*2%20+20)%W+10,GROUND);ctx.stroke()}
+    // Dino
+    const dh=dino.ducking?20:dino.h;const dy=dino.ducking?GROUND-20:dino.y-dino.h;
+    ctx.fillStyle='#55efc4';ctx.beginPath();ctx.roundRect(dino.x,dy,dino.w,dh,6);ctx.fill();
+    // Eye
+    ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(dino.x+22,dy+8,4,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#2d3436';ctx.beginPath();ctx.arc(dino.x+23,dy+8,2,0,Math.PI*2);ctx.fill();
+    // Obstacles
+    obstacles.forEach(o=>{
+        ctx.fillStyle=o.y<GROUND?'#e17055':'#ff7675';
+        ctx.beginPath();ctx.roundRect(o.x,o.y-o.h,o.w,o.h,4);ctx.fill();
+    });
+    // Score
+    document.getElementById('score').textContent=Math.floor(score);
+    if(!started){ctx.fillStyle='#fff';ctx.font='bold 20px Nunito';ctx.textAlign='center';ctx.fillText('Press Space / Tap to Start',W/2,H/2)}
+    if(over){ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);ctx.fillStyle='#fff';ctx.font='bold 28px Nunito';ctx.textAlign='center';
+    ctx.fillText('Game Over!',W/2,H/2-10);ctx.font='16px Nunito';ctx.fillText('Tap / Space to restart',W/2,H/2+25)}
+}
+function update(){
+    if(!started||over)return;
+    frame++;score+=0.15;speed=5+score/50;
+    // Dino physics
+    if(dino.jumping){dino.vy+=0.8;dino.y+=dino.vy;if(dino.y>=GROUND){dino.y=GROUND;dino.jumping=false;dino.vy=0}}
+    // Obstacles
+    if(frame%Math.max(30,80-Math.floor(score/5))===0)addObstacle();
+    obstacles.forEach(o=>o.x-=speed);
+    obstacles=obstacles.filter(o=>o.x+o.w>-10);
+    // Collision
+    const dh=dino.ducking?20:dino.h;const dy=dino.ducking?GROUND-20:dino.y-dino.h;
+    obstacles.forEach(o=>{
+        if(dino.x+dino.w>o.x+4&&dino.x<o.x+o.w-4&&dy+dh>o.y-o.h+4&&dy<o.y-4){
+            over=true;best=Math.max(best,Math.floor(score));document.getElementById('best').textContent=best;
+        }
+    });
+}
+function jump(){
+    if(over){init();return}
+    if(!started){started=true}
+    if(!dino.jumping&&dino.y>=GROUND){dino.jumping=true;dino.vy=-13}
+}
+document.addEventListener('keydown',e=>{
+    if(e.key===' '||e.key==='ArrowUp'){jump();e.preventDefault()}
+    if(e.key==='ArrowDown'){dino.ducking=true;e.preventDefault()}
+});
+document.addEventListener('keyup',e=>{if(e.key==='ArrowDown')dino.ducking=false});
+c.addEventListener('click',jump);
+c.addEventListener('touchstart',e=>{e.preventDefault();jump()});
+function loop(){update();draw();requestAnimationFrame(loop)}
+init();loop();
+</script></body></html>
