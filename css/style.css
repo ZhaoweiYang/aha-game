@@ -333,8 +333,15 @@ body {
     font-size: 14px;
 }
 
-.footer-bottom strong {
+.footer-bottom a {
     color: var(--accent);
+    text-decoration: none;
+    transition: color 0.3s ease;
+}
+
+.footer-bottom a:hover {
+    color: var(--primary);
+    text-decoration: underline;
 }
 
 /* Responsive */
