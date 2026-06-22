@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SkyCalm - Flight Picker with Turbulence Forecast</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/flights.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+</head>
+<body>
+    <header class="header">
+        <div class="container">
+            <a href="index.html" class="logo">
+                <span class="logo-aha">Sky</span><span class="logo-game">Calm</span>
+            </a>
+            <nav class="nav">
+                <a href="index.html" class="nav-link">&larr; Aha Games</a>
+                <a href="flights.html" class="nav-link active">Flight Picker</a>
+            </nav>
+        </div>
+    </header>
+
+    <main class="main">
+        <div class="container">
+            <section class="hero">
+                <h1>Find Your Smoothest Flight</h1>
+                <p>Pick a route and date &mdash; we forecast the turbulence for every departure time so you can fly calm.</p>
+            </section>
+
+            <section class="search-panel">
+                <form class="search-form" id="searchForm">
+                    <div class="field">
+                        <label for="origin">From</label>
+                        <select id="origin"></select>
+                    </div>
+                    <button type="button" class="swap-btn" id="swapBtn" title="Swap">&#8644;</button>
+                    <div class="field">
+                        <label for="destination">To</label>
+                        <select id="destination"></select>
+                    </div>
+                    <div class="field">
+                        <label for="date">Date</label>
+                        <input type="date" id="date">
+                    </div>
+                    <button type="submit" class="search-btn">Search Flights</button>
+                </form>
+            </section>
+
+            <section class="results" id="results">
+                <!-- Flights injected by JS -->
+            </section>
+        </div>
+    </main>
+
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-bottom">
+                <p>Turbulence forecasts are model-based estimates for guidance only, not operational weather data. &copy; 2026 <a href="https://luminavora.cc" target="_blank" rel="noopener noreferrer"><strong>Luminavora Inc</strong></a>. All rights reserved.</p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="js/flights.js"></script>
+</body>
+</html>
