@@ -62,3 +62,52 @@ test('完整方案：各模块齐全，补充信息触发针对性建议', () =>
   assert.equal(objections.length, 10);
   assert.equal(objections[0].tag, '高概率');
 });
+
+test('金额与让步阶梯：全参数扫描下严格有序、让步递减', () => {
+  let n = 0;
+  for (const salary of [1000, 1500, 3000, 6000, 10000, 15000, 100000, 1000000]) {
+    for (const companyStatus of ['fast', 'stable', 'slow', 'layoff']) {
+      for (const performance of ['top', 'average', 'below']) {
+        for (const expect of [1, 15, 100]) {
+          const a = Engine.analyze({ salary, companyStatus, performance, expect });
+          const N = a.numbers, L = N.ladder, R = a.rangeAmount;
+          const ctx = JSON.stringify({ salary, companyStatus, performance, expect, N, R });
+          assert.ok(N.anchor > N.target && N.target > N.floor && N.floor > salary, ctx);
+          assert.ok(L[0] === N.anchor && L[3] === N.target, ctx);
+          assert.ok(L[0] - L[1] >= L[1] - L[2] && L[1] - L[2] >= L[2] - L[3] && L[2] - L[3] >= 10, ctx);
+          assert.ok(R.low >= 10 && R.high > R.low, ctx);
+          n++;
+        }
+      }
+    }
+  }
+  assert.equal(n, 288);
+});
+
+test('低于现薪的 offer 不算筹码', () => {
+  const base = Engine.analyze({ salary: 20000 });
+  const low = Engine.analyze({ salary: 20000, offer: 'has_offer', offerSalary: 15000, willingToLeave: 'yes' });
+  const high = Engine.analyze({ salary: 20000, offer: 'has_offer', offerSalary: 26000, willingToLeave: 'yes' });
+  assert.equal(low.baseProb, base.baseProb);
+  assert.ok(high.baseProb > base.baseProb);
+  const batna = JSON.stringify(Engine.buildReport({ salary: 20000, offer: 'has_offer', offerSalary: 15000 }).sections.find((x) => x.id === 'numbers'));
+  assert.ok(batna.includes('不是筹码'));
+});
+
+test('入职不满 1 年且未调薪，不按“久未调薪”加成', () => {
+  const newHire = Engine.analyze({ tenure: 'lt1', lastRaise: 'never' });
+  const recent = Engine.analyze({ tenure: 'lt1', lastRaise: '6to12' });
+  assert.equal(newHire.range.mid, recent.range.mid);
+  assert.equal(newHire.dims.find((d) => d.key === 'timing').value, recent.dims.find((d) => d.key === 'timing').value);
+});
+
+test('补充情况规则不被成果用词误触发；成果结尾标点不重复', () => {
+  const r = Engine.buildReport({
+    achievementText: '优化推荐算法，推动事业部点击率提升 15%。',
+    extra: '同事们都很支持我，我还担任校招面试官', companyStatus: 'fast'
+  });
+  assert.equal(r.sections.find((x) => x.id === 'extra'), undefined);
+  assert.ok(!JSON.stringify(r).includes('。。'));
+  const hit = JSON.stringify(Engine.buildReport({ extra: '公司在裁员，新来的同事工资比我高' }).sections.find((x) => x.id === 'extra'));
+  assert.ok(hit.includes('裁员') && hit.includes('倒挂'));
+});

@@ -68,7 +68,7 @@ raise/
 cd raise/server
 cp .env.example .env     # 默认 PAY_PROVIDER=mock，即测试支付
 npm install
-npm start                # 打开 http://localhost:8787
+npm start                # 打开 http://localhost:8787（需 Node >= 22.9）
 npm test                 # 引擎、购买全流程、微信支付验签测试
 ```
 
@@ -89,12 +89,22 @@ npm test                 # 引擎、购买全流程、微信支付验签测试
 ### 2. 部署
 
 ```bash
-# 服务器上（Node >= 22）
+# 服务器上（Node >= 22.9）
 cd raise/server && npm ci --omit=dev
 NODE_ENV=production npm start     # 建议用 pm2 / systemd 守护
 ```
 
-- 用 Nginx 反向代理 https 并转发到 8787 端口，同时设置 `TRUST_PROXY=1`，否则 H5 支付拿不到用户的真实 IP
+- 用 Nginx 反向代理 https 并转发到 8787 端口，同时设置 `TRUST_PROXY=1`，否则 H5 支付拿不到用户的真实 IP。Nginx 中需要加上：
+
+  ```nginx
+  location / {
+      proxy_pass http://127.0.0.1:8787;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  }
+  ```
+
+- 服务只对外提供页面运行所需的 5 个文件（`index.html`、`css/app.css`、`js/app.js`、`js/config.js`、`js/schema.js`），其余文件（包括方案引擎、密钥、数据）一律返回 404
 - 定期备份 `server/data/db.json`。流量上来后，把 `store.js` 换成数据库实现即可，接口不用改
 
 ### 3. 价格
@@ -108,8 +118,8 @@ NODE_ENV=production npm start     # 建议用 pm2 / systemd 守护
 1. 用户谈完后在方案页点“涨薪成功”或“部分成功”，计入 `helped`，按 行业 × 职级 分组统计
 2. 同组人数达到 `SOCIAL_MIN_DISPLAY`（默认 30）时，展示“已帮助 N 位 互联网 · 资深用户反馈涨薪成功”
 3. 同组人数不足、但全站达到门槛时，展示全站人数
-4. 都不足时，退而展示“为你定制过方案的类似用户数”；仍然不足时，展示公开调研数据（PayScale：主动开口的人中 70% 获得了涨薪）
-5. 如果上线前有可追溯的内测数据，可以填进 `server/stats-baseline.json`（参考 `stats-baseline.example.json`）
+4. 都不足时，退而展示同组“已解锁方案”的付费订单数（只算付费订单，同一个人反复测评不会把数字刷高）；仍然不足时，展示公开调研数据（PayScale：主动开口的人中 70% 获得了涨薪）
+5. 如果上线前有可追溯的内测数据，可以填进 `server/stats-baseline.json`（参考 `stats-baseline.example.json`，也可用环境变量 `STATS_BASELINE_FILE` 指定路径）
 
 > **合规提醒**：《广告法》和《反不正当竞争法》禁止虚构交易量、用户评价和效果数据。请不要在 baseline 里填写无法追溯的数字。“成功率”和“涨幅”页面上已标注为模型预估，不构成承诺，这一点请保留。
 

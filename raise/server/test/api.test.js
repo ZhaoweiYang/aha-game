@@ -6,10 +6,12 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const net = require('net');
 
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'raise-test-'));
 process.env.PAY_PROVIDER = 'mock';
 process.env.SOCIAL_MIN_DISPLAY = '2';
+process.env.STATS_BASELINE_FILE = path.join(process.env.DATA_DIR, 'no-baseline.json');
 delete process.env.ANTHROPIC_API_KEY;
 
 const { server } = require('../server.js');
@@ -59,16 +61,57 @@ test('诊断 → 下单 → 支付 → 获取方案 → 反馈结果', async () 
   assert.equal(pv3.social.count, '2 位');
 });
 
-test('方案引擎和服务端代码不对外暴露', async () => {
-  assert.equal((await fetch(base + '/js/engine.js')).status, 404);
-  assert.equal((await fetch(base + '/server/server.js')).status, 404);
-  assert.equal((await fetch(base + '/js/../server/.env')).status, 404);
-  assert.equal((await fetch(base + '/js/schema.js')).status, 200);
-  assert.equal((await fetch(base + '/')).status, 200);
+// 用原始 socket 发请求，避免 fetch 规范化路径
+function rawGet(target, headers) {
+  return new Promise((resolve, reject) => {
+    const sock = net.connect(server.address().port, '127.0.0.1', () => {
+      sock.write(`GET ${target} HTTP/1.1\r\nHost: x\r\n${headers || ''}Connection: close\r\n\r\n`);
+    });
+    let buf = '';
+    sock.on('data', (d) => { buf += d; });
+    sock.on('end', () => resolve(Number(buf.split(' ')[1])));
+    sock.on('error', reject);
+  });
+}
+
+test('方案引擎、服务端代码、密钥和数据不对外暴露（含编码绕过）', async () => {
+  for (const p of ['/js/engine.js', '/js//engine.js', '/js/%2Fengine.js', '/js/./engine.js', '/server/server.js',
+    '/%2Fserver/server.js', '//server/data/db.json', '/%2Fserver/data/db.json', '/server/.env', '/README.md',
+    '/docs/methodology.md', '/js/%2e%2e/server/server.js', '/%00', '/index.html%00']) {
+    assert.equal(await rawGet(p), 404, p);
+  }
+  for (const p of ['/', '/index.html', '/css/app.css', '/js/app.js', '/js/config.js', '/js/schema.js']) {
+    assert.equal(await rawGet(p), 200, p);
+  }
+});
+
+test('畸形请求不会让服务崩溃', async () => {
+  assert.equal(await rawGet('//'), 400);
+  assert.equal(await rawGet('/%E0%A4%A'), 404);
+  assert.equal((await fetch(base + '/api/health', { headers: { cookie: 'promo=50%; raise_openid=abc' } })).status, 200);
+  for (const id of ['__proto__', 'constructor', 'hasOwnProperty']) {
+    assert.equal((await post('/api/pay/mock/confirm', { orderId: id })).status, 404);
+    assert.equal((await post('/api/order', { previewId: id, channel: 'mock' })).status, 404);
+    assert.equal((await post('/api/outcome', { orderId: id, result: 'success' })).status, 404);
+  }
+  assert.equal(({}).status, undefined);
+  assert.equal((await post('/api/preview', null)).status, 200);
+  assert.equal((await fetch(base + '/api/health')).status, 200);
+});
+
+test('同一订单反复反馈只计一次', async () => {
+  const pv = await (await post('/api/preview', { input: { industry: 'auto', level: 'junior' } })).json();
+  const o = await (await post('/api/order', { previewId: pv.previewId, channel: 'mock' })).json();
+  await post('/api/pay/mock/confirm', { orderId: o.orderId });
+  for (let i = 0; i < 5; i++) await post('/api/outcome', { orderId: o.orderId, result: 'success' });
+  const { store } = require('../server.js');
+  assert.equal(store.data.stats['auto|junior'].helped, 1);
+  await post('/api/outcome', { orderId: o.orderId, result: 'fail' });
+  assert.equal(store.data.stats['auto|junior'].helped, 0);
 });
 
 test('参数校验', async () => {
   assert.equal((await post('/api/order', { previewId: 'nope' })).status, 404);
   assert.equal((await fetch(base + '/api/report/Rdeadbeef')).status, 404);
-  assert.equal((await post('/api/preview', 'not json')).status, 200); // 字符串 body 会被清洗为默认输入
+  assert.equal((await post('/api/preview', 'not json')).status, 200); // 非对象 body 会被清洗为默认输入
 });

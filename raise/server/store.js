@@ -4,18 +4,27 @@
 const fs = require('fs');
 const path = require('path');
 
-const PREVIEW_TTL_MS = 7 * 24 * 3600 * 1000;
+const TTL_MS = 7 * 24 * 3600 * 1000;
 
 class Store {
   constructor(dir) {
     this.file = path.join(dir, 'db.json');
     fs.mkdirSync(dir, { recursive: true });
-    this.data = { previews: {}, orders: {}, stats: {}, outcomes: [] };
+    this.data = { previews: {}, orders: {}, stats: {} };
     if (fs.existsSync(this.file)) {
       Object.assign(this.data, JSON.parse(fs.readFileSync(this.file, 'utf8')));
     }
     this.pruneExpired();
+    // 长时间运行时定期清理过期数据，避免内存和每次写盘的体积无限增长
+    this.pruneTimer = setInterval(() => this.pruneExpired(), 3600 * 1000);
+    this.pruneTimer.unref();
     this.timer = null;
+  }
+
+  // 只按自有属性查找，避免 "__proto__" 之类的 id 取到原型链上的对象
+  get(table, id) {
+    const map = this.data[table];
+    return typeof id === 'string' && Object.prototype.hasOwnProperty.call(map, id) ? map[id] : undefined;
   }
 
   // 防抖写盘：先写临时文件再 rename，避免进程中断导致文件损坏
@@ -33,16 +42,22 @@ class Store {
     fs.renameSync(tmp, this.file);
   }
 
+  // 已支付订单及其诊断永久保留；未支付的订单和诊断 7 天后清理
   pruneExpired() {
     const now = Date.now();
-    const paidPreviews = new Set(Object.values(this.data.orders).map((o) => o.previewId));
-    for (const [id, p] of Object.entries(this.data.previews)) {
-      if (now - p.createdAt > PREVIEW_TTL_MS && !paidPreviews.has(id)) delete this.data.previews[id];
+    const keep = new Set();
+    for (const [id, o] of Object.entries(this.data.orders)) {
+      if (o.status === 'paid') keep.add(o.previewId);
+      else if (now - o.createdAt > TTL_MS) delete this.data.orders[id];
     }
+    for (const [id, p] of Object.entries(this.data.previews)) {
+      if (now - p.createdAt > TTL_MS && !keep.has(id)) delete this.data.previews[id];
+    }
+    this.save();
   }
 
   bump(segKey, field, n) {
-    const s = this.data.stats[segKey] || (this.data.stats[segKey] = { generated: 0, paid: 0, helped: 0 });
+    const s = this.get('stats', segKey) || (this.data.stats[segKey] = { generated: 0, paid: 0, helped: 0 });
     s[field] = (s[field] || 0) + (n || 1);
     this.save();
   }

@@ -25,7 +25,7 @@ const CORS_ORIGIN = env.CORS_ORIGIN || '';
 const store = new Store(path.resolve(__dirname, env.DATA_DIR || 'data'));
 
 // 运营方填写的历史真实数据（例如上线前内测用户的反馈），与线上真实统计相加后展示
-const BASELINE_FILE = path.join(__dirname, 'stats-baseline.json');
+const BASELINE_FILE = env.STATS_BASELINE_FILE || path.join(__dirname, 'stats-baseline.json');
 const baseline = fs.existsSync(BASELINE_FILE) ? JSON.parse(fs.readFileSync(BASELINE_FILE, 'utf8')) : { segments: {} };
 
 let wechat = null;
@@ -49,6 +49,17 @@ const aiJobs = new Set();
 /* ---------------- 工具 ---------------- */
 
 const newId = (bytes) => crypto.randomBytes(bytes || 12).toString('hex');
+const PREVIEW_ID = /^[a-f0-9]{24}$/;
+const ORDER_ID = /^R[a-f0-9]{28}$/;
+const httpError = (status, message, extra) => Object.assign(new Error(message), { status }, extra || {});
+
+function findPreview(id) {
+  return PREVIEW_ID.test(String(id)) ? store.get('previews', id) : undefined;
+}
+
+function findOrder(id) {
+  return ORDER_ID.test(String(id)) ? store.get('orders', id) : undefined;
+}
 
 function send(res, status, data, headers) {
   const body = typeof data === 'string' ? data : JSON.stringify(data);
@@ -65,7 +76,7 @@ function readBody(req, limit) {
     const chunks = [];
     req.on('data', (c) => {
       size += c.length;
-      if (size > (limit || 32 * 1024)) { reject(Object.assign(new Error('请求体过大'), { status: 413 })); req.destroy(); return; }
+      if (size > (limit || 32 * 1024)) { reject(httpError(413, '请求体过大')); req.destroy(); return; }
       chunks.push(c);
     });
     req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
@@ -75,21 +86,32 @@ function readBody(req, limit) {
 
 async function readJson(req) {
   const raw = await readBody(req);
-  try { return raw ? JSON.parse(raw) : {}; } catch (e) { throw Object.assign(new Error('JSON 格式错误'), { status: 400 }); }
+  let body;
+  try { body = raw ? JSON.parse(raw) : {}; } catch (e) { throw httpError(400, 'JSON 格式错误'); }
+  return body && typeof body === 'object' && !Array.isArray(body) ? body : {};
 }
 
+// 反向代理需设置 X-Real-IP $remote_addr；没有时取 X-Forwarded-For 最右一项（由最近一层代理追加，客户端无法伪造）
 function clientIp(req) {
-  if (TRUST_PROXY && req.headers['x-forwarded-for']) return req.headers['x-forwarded-for'].split(',')[0].trim();
+  if (TRUST_PROXY) {
+    const real = req.headers['x-real-ip'];
+    if (real) return String(real).trim();
+    const xff = req.headers['x-forwarded-for'];
+    if (xff) return String(xff).split(',').pop().trim();
+  }
   return (req.socket.remoteAddress || '').replace(/^::ffff:/, '');
 }
 
-function cookies(req) {
-  const out = {};
-  (req.headers.cookie || '').split(';').forEach((p) => {
-    const i = p.indexOf('=');
-    if (i > 0) out[p.slice(0, i).trim()] = decodeURIComponent(p.slice(i + 1).trim());
-  });
-  return out;
+// 只解析需要的那个 cookie；同域其他 cookie 的格式问题不影响本服务
+function cookie(req, name) {
+  for (const part of (req.headers.cookie || '').split(';')) {
+    const i = part.indexOf('=');
+    if (i > 0 && part.slice(0, i).trim() === name) {
+      const v = part.slice(i + 1).trim();
+      try { return decodeURIComponent(v); } catch (e) { return v; }
+    }
+  }
+  return '';
 }
 
 // 简单的按 IP 限流（单进程内存）
@@ -100,7 +122,7 @@ function rateLimit(req, name, max, windowMs) {
   let b = buckets.get(key);
   if (!b || b.reset < now) { b = { count: 0, reset: now + windowMs }; buckets.set(key, b); }
   b.count++;
-  if (b.count > max) throw Object.assign(new Error('操作太频繁，请稍后再试'), { status: 429 });
+  if (b.count > max) throw httpError(429, '操作太频繁，请稍后再试');
 }
 setInterval(() => { const now = Date.now(); for (const [k, b] of buckets) if (b.reset < now) buckets.delete(k); }, 600000).unref();
 
@@ -110,7 +132,7 @@ const yuan = (fen) => Math.round(fen) / 100;
 
 // “帮助了多少类似的人”：只展示真实数据（线上统计 + 运营方填写的历史数据），不足门槛时退回到公开调研数据
 function socialProof(seg) {
-  const s = store.data.stats[seg.key] || {};
+  const s = store.get('stats', seg.key) || {};
   const b = (baseline.segments || {})[seg.key] || {};
   const helped = (s.helped || 0) + (b.helped || 0);
   if (helped >= SOCIAL_MIN_DISPLAY) {
@@ -121,9 +143,10 @@ function socialProof(seg) {
   if (allHelped >= SOCIAL_MIN_DISPLAY) {
     return { type: 'helped', label: '已帮助', count: allHelped + ' 人', text: '用户反馈涨薪成功' };
   }
-  const generated = (s.generated || 0) + (b.generated || 0);
-  if (generated >= SOCIAL_MIN_DISPLAY) {
-    return { type: 'generated', label: '和你类似的人', count: generated + ' 位', text: `${seg.label}已在这里定制方案` };
+  // 付费订单才计数：同一个人反复测评不会把数字刷高
+  const paid = (s.paid || 0) + (b.paid || 0);
+  if (paid >= SOCIAL_MIN_DISPLAY) {
+    return { type: 'paid', label: '和你类似的人', count: paid + ' 位', text: `${seg.label}已在这里解锁专属方案` };
   }
   return { type: 'research', label: '主动开口的人里', count: '70%', text: '获得了涨薪（PayScale 16 万人调研）' };
 }
@@ -137,7 +160,7 @@ function markPaid(order, transactionId) {
   order.status = 'paid';
   order.paidAt = Date.now();
   order.transactionId = transactionId || '';
-  const preview = store.data.previews[order.previewId];
+  const preview = store.get('previews', order.previewId);
   store.bump(preview.segment.key, 'paid');
   store.save();
   startAi(order);
@@ -145,7 +168,7 @@ function markPaid(order, transactionId) {
 
 function startAi(order) {
   if (!ai || aiJobs.has(order.id)) return;
-  const preview = store.data.previews[order.previewId];
+  const preview = store.get('previews', order.previewId);
   order.ai = { status: 'pending', attempts: ((order.ai && order.ai.attempts) || 0) + 1 };
   aiJobs.add(order.id);
   store.save();
@@ -154,7 +177,7 @@ function startAi(order) {
     .then((sections) => { order.ai = { status: 'done', sections, attempts: order.ai.attempts }; })
     .catch((err) => {
       console.error('[AI] 订单', order.id, '生成失败：', err.message);
-      order.ai = { status: 'error', attempts: order.ai.attempts, retryable: require('./ai.js').AiCoach.retryable(err) || err instanceof SyntaxError };
+      order.ai = { status: 'error', attempts: order.ai.attempts, retryable: ai.constructor.retryable(err) || err instanceof SyntaxError };
     })
     .finally(() => { aiJobs.delete(order.id); store.save(); });
 }
@@ -188,7 +211,7 @@ route('GET', /^\/api\/health$/, (req) => ({
   ok: true,
   price: priceInfo(),
   pay: { provider: PAY_PROVIDER, h5: PAY_PROVIDER === 'wechat' && wechat.h5Enabled, jsapi: PAY_PROVIDER === 'wechat' && wechat.jsapiEnabled },
-  openid: !!cookies(req).raise_openid,
+  openid: !!cookie(req, 'raise_openid'),
   ai: !!ai
 }));
 
@@ -200,21 +223,22 @@ route('POST', /^\/api\/preview$/, async (req) => {
   const preview = Engine.preview(a);
   const id = newId(12);
   store.data.previews[id] = { id, input, segment: a.segment, preview, createdAt: Date.now() };
+  store.save();
   store.bump(a.segment.key, 'generated');
   return { previewId: id, preview, social: socialProof(a.segment), price: priceInfo() };
 });
 
 route('GET', /^\/api\/preview\/([a-f0-9]{24})$/, (req, m) => {
-  const p = store.data.previews[m[1]];
-  if (!p) throw Object.assign(new Error('诊断不存在或已过期'), { status: 404 });
+  const p = findPreview(m[1]);
+  if (!p) throw httpError(404, '诊断不存在或已过期');
   return { preview: p.preview, input: p.input, social: socialProof(p.segment), price: priceInfo() };
 });
 
 route('POST', /^\/api\/order$/, async (req) => {
   rateLimit(req, 'order', 20, 3600 * 1000);
   const body = await readJson(req);
-  const preview = store.data.previews[body.previewId];
-  if (!preview) throw Object.assign(new Error('诊断不存在或已过期，请重新测评'), { status: 404 });
+  const preview = findPreview(body.previewId);
+  if (!preview) throw httpError(404, '诊断不存在或已过期，请重新测评');
   const channel = body.channel;
   const order = {
     id: 'R' + newId(14),
@@ -233,40 +257,40 @@ route('POST', /^\/api\/order$/, async (req) => {
     return { orderId: order.id, mock: true, amountYuan: yuan(order.amountFen) };
   }
   if (channel === 'h5') {
-    if (!wechat.h5Enabled) throw Object.assign(new Error('暂不支持浏览器支付，请在微信中打开'), { status: 400 });
+    if (!wechat.h5Enabled) throw httpError(400, '暂不支持浏览器支付，请在微信中打开');
     const h5Url = await wechat.createH5(order, clientIp(req), `${PUBLIC_BASE_URL}/?order=${order.id}`);
     return { orderId: order.id, h5Url };
   }
   if (channel === 'jsapi') {
-    const openid = cookies(req).raise_openid;
-    if (!wechat.jsapiEnabled) throw Object.assign(new Error('暂不支持微信内支付，请在浏览器中打开'), { status: 400 });
-    if (!openid) throw Object.assign(new Error('请先完成微信授权'), { status: 401 });
+    const openid = cookie(req, 'raise_openid');
+    if (!wechat.jsapiEnabled) throw httpError(400, '暂不支持微信内支付，请在浏览器中打开');
+    if (!openid) throw httpError(401, '请先完成微信授权');
     return { orderId: order.id, jsapi: await wechat.createJsapi(order, openid) };
   }
-  throw Object.assign(new Error('不支持的支付方式'), { status: 400 });
+  throw httpError(400, '不支持的支付方式');
 });
 
 route('POST', /^\/api\/pay\/mock\/confirm$/, async (req) => {
-  if (PAY_PROVIDER !== 'mock') throw Object.assign(new Error('Not found'), { status: 404 });
+  if (PAY_PROVIDER !== 'mock') throw httpError(404, 'Not found');
   const body = await readJson(req);
-  const order = store.data.orders[body.orderId];
-  if (!order) throw Object.assign(new Error('订单不存在'), { status: 404 });
+  const order = findOrder(body.orderId);
+  if (!order) throw httpError(404, '订单不存在');
   markPaid(order, 'MOCK-' + Date.now());
   return { ok: true };
 });
 
 route('POST', /^\/api\/pay\/wechat\/notify$/, async (req) => {
-  if (!wechat) throw Object.assign(new Error('Not found'), { status: 404 });
+  if (!wechat) throw httpError(404, 'Not found');
   const raw = await readBody(req, 64 * 1024);
   let parsed;
   try {
     parsed = wechat.parseNotify(req.headers, raw);
   } catch (e) {
     console.error('[微信支付] 回调校验失败：', e.message);
-    throw Object.assign(new Error('FAIL'), { status: 401, wechat: true });
+    throw httpError(401, 'FAIL', { wechat: true });
   }
   const t = parsed.transaction;
-  const order = store.data.orders[t.out_trade_no];
+  const order = findOrder(t.out_trade_no);
   if (order && t.trade_state === 'SUCCESS' && t.mchid === wechat.mchid && t.amount && t.amount.total === order.amountFen) {
     markPaid(order, t.transaction_id);
   }
@@ -274,58 +298,61 @@ route('POST', /^\/api\/pay\/wechat\/notify$/, async (req) => {
 });
 
 route('GET', /^\/api\/order\/(R[a-f0-9]{28})$/, async (req, m) => {
-  const order = store.data.orders[m[1]];
-  if (!order) throw Object.assign(new Error('订单不存在'), { status: 404 });
+  const order = findOrder(m[1]);
+  if (!order) throw httpError(404, '订单不存在');
   await syncWechatOrder(order);
   return { status: order.status };
 });
 
 function paidOrder(id) {
-  const order = store.data.orders[id];
-  if (!order) throw Object.assign(new Error('订单不存在'), { status: 404 });
-  if (order.status !== 'paid') throw Object.assign(new Error('订单未支付'), { status: 402 });
+  const order = findOrder(id);
+  if (!order) throw httpError(404, '订单不存在');
+  if (order.status !== 'paid') throw httpError(402, '订单未支付');
   return order;
 }
 
 route('GET', /^\/api\/report\/(R[a-f0-9]{28})$/, async (req, m) => {
-  const order = store.data.orders[m[1]];
+  const order = findOrder(m[1]);
   if (order) await syncWechatOrder(order);
   const paid = paidOrder(m[1]);
-  const preview = store.data.previews[paid.previewId];
+  const preview = store.get('previews', paid.previewId);
   return { report: Engine.buildReport(preview.input), ai: aiState(paid) };
 });
 
 route('GET', /^\/api\/report\/(R[a-f0-9]{28})\/ai$/, (req, m) => aiState(paidOrder(m[1])));
 
+// 每个订单只保留最新一次反馈
 route('POST', /^\/api\/outcome$/, async (req) => {
+  rateLimit(req, 'outcome', 30, 3600 * 1000);
   const body = await readJson(req);
   const order = paidOrder(body.orderId);
   const result = ['success', 'partial', 'fail'].indexOf(body.result) >= 0 ? body.result : null;
-  if (!result) throw Object.assign(new Error('参数错误'), { status: 400 });
-  const seg = store.data.previews[order.previewId].segment;
+  if (!result) throw httpError(400, '参数错误');
+  if (order.outcome === result) return { ok: true };
+  const seg = store.get('previews', order.previewId).segment;
   const wasHelped = order.outcome === 'success' || order.outcome === 'partial';
   const isHelped = result === 'success' || result === 'partial';
   if (!wasHelped && isHelped) store.bump(seg.key, 'helped', 1);
   if (wasHelped && !isHelped) store.bump(seg.key, 'helped', -1);
   order.outcome = result;
-  store.data.outcomes.push({ orderId: order.id, segment: seg.key, result, at: Date.now() });
+  order.outcomeAt = Date.now();
   store.save();
   return { ok: true };
 });
 
 route('GET', /^\/api\/wechat\/oauth$/, (req, m, url) => {
-  if (!wechat) throw Object.assign(new Error('Not found'), { status: 404 });
+  if (!wechat) throw httpError(404, 'Not found');
   const pid = url.searchParams.get('pid') || '';
-  if (!/^[a-f0-9]{24}$/.test(pid)) throw Object.assign(new Error('参数错误'), { status: 400 });
+  if (!PREVIEW_ID.test(pid)) throw httpError(400, '参数错误');
   return { __redirect: wechat.oauthUrl(PUBLIC_BASE_URL + '/api/wechat/oauth/callback', pid) };
 });
 
 route('GET', /^\/api\/wechat\/oauth\/callback$/, async (req, m, url) => {
-  if (!wechat) throw Object.assign(new Error('Not found'), { status: 404 });
+  if (!wechat) throw httpError(404, 'Not found');
   const pid = url.searchParams.get('state') || '';
   const openid = await wechat.openidFromCode(url.searchParams.get('code') || '');
   return {
-    __redirect: `${PUBLIC_BASE_URL}/?resume=${/^[a-f0-9]{24}$/.test(pid) ? pid : ''}`,
+    __redirect: `${PUBLIC_BASE_URL}/?resume=${PREVIEW_ID.test(pid) ? pid : ''}`,
     __headers: { 'Set-Cookie': `raise_openid=${encodeURIComponent(openid)}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax${PUBLIC_BASE_URL.startsWith('https') ? '; Secure' : ''}` }
   };
 });
@@ -333,7 +360,7 @@ route('GET', /^\/api\/wechat\/oauth\/callback$/, async (req, m, url) => {
 // 运营数据看板（需 ADMIN_TOKEN）
 route('GET', /^\/api\/admin\/stats$/, (req) => {
   const token = env.ADMIN_TOKEN;
-  if (!token || req.headers.authorization !== 'Bearer ' + token) throw Object.assign(new Error('Unauthorized'), { status: 401 });
+  if (!token || req.headers.authorization !== 'Bearer ' + token) throw httpError(401, 'Unauthorized');
   const orders = Object.values(store.data.orders);
   const paid = orders.filter((o) => o.status === 'paid');
   return {
@@ -341,7 +368,8 @@ route('GET', /^\/api\/admin\/stats$/, (req) => {
     orders: orders.length,
     paid: paid.length,
     revenueYuan: yuan(paid.reduce((s, o) => s + o.amountFen, 0)),
-    outcomes: store.data.outcomes.length,
+    outcomes: paid.filter((o) => o.outcome).length,
+    helped: paid.filter((o) => o.outcome === 'success' || o.outcome === 'partial').length,
     segments: store.data.stats
   };
 });
@@ -352,14 +380,13 @@ const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'application/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.txt': 'text/plain; charset=utf-8'
 };
-// 方案引擎只在服务端运行，不对外提供，避免付费内容被直接读取
-const BLOCKED = [/^\/server(\/|$)/, /^\/js\/engine\.js$/, /^\/docs(\/|$)/, /\/\./, /\.md$/];
+// 白名单：只对外提供页面运行所需的文件。方案引擎（js/engine.js）、服务端代码、密钥和数据一律不可访问
+const PUBLIC_FILES = new Set(['/index.html', '/css/app.css', '/js/app.js', '/js/config.js', '/js/schema.js']);
 
 function serveStatic(req, res, pathname) {
   if (pathname === '/') pathname = '/index.html';
-  if (BLOCKED.some((re) => re.test(pathname))) return send(res, 404, 'Not found');
-  const file = path.join(ROOT, path.normalize(pathname));
-  if (!file.startsWith(ROOT + path.sep)) return send(res, 404, 'Not found');
+  if (!PUBLIC_FILES.has(pathname)) return send(res, 404, 'Not found');
+  const file = path.join(ROOT, pathname);
   fs.readFile(file, (err, buf) => {
     if (err) return send(res, 404, 'Not found');
     res.writeHead(200, {
@@ -373,8 +400,17 @@ function serveStatic(req, res, pathname) {
 
 /* ---------------- 入口 ---------------- */
 
-const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, 'http://localhost');
+const server = http.createServer((req, res) => {
+  handle(req, res).catch((err) => {
+    console.error('[错误]', req.method, req.url, err);
+    if (!res.headersSent) send(res, 500, { error: '服务开小差了，请稍后再试' });
+    else res.destroy();
+  });
+});
+
+async function handle(req, res) {
+  let url;
+  try { url = new URL(req.url, 'http://localhost'); } catch (e) { return send(res, 400, 'Bad request'); }
   if (CORS_ORIGIN) {
     res.setHeader('Access-Control-Allow-Origin', CORS_ORIGIN);
     res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -386,9 +422,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (!url.pathname.startsWith('/api/')) {
     if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, 'Method not allowed');
-    let pathname;
-    try { pathname = decodeURIComponent(url.pathname); } catch (e) { return send(res, 400, 'Bad request'); }
-    return serveStatic(req, res, pathname);
+    return serveStatic(req, res, url.pathname);
   }
   const r = routes.find((x) => x.method === req.method && x.pattern.test(url.pathname));
   if (!r) return send(res, 404, { error: 'Not found' });
@@ -406,7 +440,9 @@ const server = http.createServer(async (req, res) => {
     if (err.wechat) return send(res, status, { code: 'FAIL', message: err.message });
     send(res, status, { error: status >= 500 ? '服务开小差了，请稍后再试' : err.message });
   }
-});
+}
+
+process.on('unhandledRejection', (err) => console.error('[未处理的异常]', err));
 
 if (require.main === module) {
   server.listen(PORT, () => {

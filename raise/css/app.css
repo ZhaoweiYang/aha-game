@@ -194,12 +194,12 @@ button { font: inherit; color: inherit; }
 .metric-label { font-size: 13px; color: var(--text-2); }
 .metric-value { font-size: 30px; font-weight: 800; line-height: 1.2; margin: 2px 0; }
 .metric-value.gold { color: var(--gold-2); }
-.metric-value.range { font-size: 24px; white-space: nowrap; }
+.metric-value.range { font-size: clamp(19px, 6vw, 24px); }
 .metric-title { font-size: 17px; font-weight: 700; margin-bottom: 4px; }
 .metric-note { font-size: 12px; color: var(--text-2); }
 .metric-note b { color: var(--text); }
 .uplift { display: inline-block; margin-top: 6px; font-size: 12px; background: var(--brand-soft); color: var(--text); padding: 3px 8px; border-radius: 6px; }
-.metric-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.metric-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
 .metric-row .metric-card { margin-bottom: 0; }
 .helped-num { font-size: 26px; font-weight: 800; color: var(--good); }
 .strategy-card { background: var(--brand-soft); border-radius: var(--radius); padding: 14px 16px; margin: 12px 0; }

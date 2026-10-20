@@ -21,7 +21,7 @@
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
   const sigmoid = (z) => 1 / (1 + Math.exp(-z));
   const round05 = (v) => Math.round(v * 2) / 2;
-  const round100 = (v) => Math.round(v / 100) * 100;
+  const round10 = (v) => Math.round(v / 10) * 10;
   const money = (n) => '¥' + Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
   const pct = (v) => (Math.round(v * 10) / 10).toString().replace(/\.0$/, '') + '%';
 
@@ -34,6 +34,12 @@
 
   const hasNumber = (s) => /\d/.test(s || '');
   const isQuantified = (input) => hasNumber(input.achievementText) && input.achievementText.length >= 8;
+  // offer 只有比现在薪资高时才是筹码
+  const offerLeverage = (input) => input.offer === 'has_offer' && input.offerSalary > input.salary;
+  // 入职不满 1 年且没调过薪，不算“该涨了”，按 6-12 个月处理
+  const lastRaiseOf = (input) => (input.tenure === 'lt1' && input.lastRaise === 'never' ? '6to12' : input.lastRaise);
+  // 用户填写的成果去掉换行和结尾标点，方便嵌入到句子里
+  const achievementClause = (input) => (input.achievementText || '').replace(/\s*\n+\s*/g, '；').replace(/[。！!？?.；;，,、\s]+$/, '');
 
   /* ---------------- 涨幅模型 ---------------- */
 
@@ -43,7 +49,7 @@
     mid += { below20: 6, below10: 3, equal: 0.5, above: -1.5, unknown: 0.5 }[input.market];
     mid += Math.min(input.achievements.length, 5) * 0.6;
     mid += (input.irreplaceable - 3) * 1.2;
-    mid += { lt6: -2, '6to12': 0, '12to24': 1.5, gt24: 3, never: 3 }[input.lastRaise];
+    mid += { lt6: -2, '6to12': 0, '12to24': 1.5, gt24: 3, never: 3 }[lastRaiseOf(input)];
     if (input.offer === 'interviewing') mid += 1.5;
     if (input.goal === 'promotion') mid += 3;
     mid *= { fast: 1.25, stable: 1, slow: 0.7, layoff: 0.45 }[input.companyStatus];
@@ -83,16 +89,15 @@
       '薪资与市场相比：' + L('market', input.market),
       input.market === 'unknown' ? { controllable: true, optZ: 0, fix: '方案给出市场薪资调研路径，用客观数据说话' } : null);
     if (input.offer === 'interviewing') add('offer', 0.2, '正在接触外部机会');
-    if (input.offer === 'has_offer') add('offer', input.willingToLeave === 'no' ? 0.3 : 0.55, '手上有外部 offer');
+    if (offerLeverage(input)) add('offer', input.willingToLeave === 'no' ? 0.3 : 0.55, '手上有更高薪的外部 offer');
     add('status', { fast: 0.45, stable: 0.1, slow: -0.5, layoff: -1.1 }[input.companyStatus],
       '公司经营：' + L('companyStatus', input.companyStatus));
     add('ctype', { soe: -0.3, foreign: 0.05, listed: 0.05, startup: 0, private: 0 }[input.companyType],
       '企业类型：' + L('companyType', input.companyType));
     add('power', { direct: 0.15, escalate: 0, rigid: -0.25 }[input.bossPower], L('bossPower', input.bossPower));
     add('relation', (input.relation - 3) * 0.2, `与老板关系 ${input.relation}/5`);
-    let lr = { lt6: -0.6, '6to12': 0, '12to24': 0.3, gt24: 0.45, never: 0.45 }[input.lastRaise];
-    if (input.tenure === 'lt1' && input.lastRaise === 'never') lr = 0;
-    add('lastRaise', lr, '上次调薪：' + L('lastRaise', input.lastRaise));
+    add('lastRaise', { lt6: -0.6, '6to12': 0, '12to24': 0.3, gt24: 0.45, never: 0.45 }[lastRaiseOf(input)],
+      '上次调薪：' + L('lastRaise', input.lastRaise));
     if (input.tenure === 'lt1') add('tenure', -0.4, '入职不足 1 年');
     if (input.tenure === 'gt4') add('tenure', 0.1, '在公司 4 年以上，熟悉业务');
     const cyc = {
@@ -126,12 +131,12 @@
       {
         key: 'market', label: '市场筹码',
         value: clamp({ below20: 82, below10: 68, equal: 48, above: 28, unknown: 40 }[input.market] +
-          ({ none: 0, interviewing: 10, has_offer: 20 }[input.offer]), 5, 100)
+          (offerLeverage(input) ? 20 : input.offer === 'none' ? 0 : 10), 5, 100)
       },
       {
         key: 'timing', label: '时机窗口',
         value: clamp({ soon: 82, far: 45, passed: 30, unknown: 55 }[input.cycle] +
-          ({ lt6: -25, '6to12': 0, '12to24': 10, gt24: 15, never: 15 }[input.lastRaise]) +
+          ({ lt6: -25, '6to12': 0, '12to24': 10, gt24: 15, never: 15 }[lastRaiseOf(input)]) +
           ({ fast: 8, stable: 0, slow: -12, layoff: -25 }[input.companyStatus]), 5, 100)
       },
       {
@@ -187,7 +192,22 @@
     target = round05(target);
     let anchor = round05(Math.max(target + 2, target * 1.25));
     if (range.offerPremium > 0 && input.willingToLeave !== 'no') anchor = round05(Math.max(anchor, Math.min(range.offerPremium, 50)));
-    const floor = range.low;
+
+    // 金额保证 当前薪资 < 底线 < 目标 < 锚点；低薪时按百分比取整可能撞在一起，这里逐级拉开
+    const S0 = input.salary;
+    const floorAmt = Math.max(round10(S0 * (1 + range.low / 100)), S0 + 10);
+    const targetAmt = Math.max(preciseAmount(S0 * (1 + target / 100)), floorAmt + 10);
+    const anchorAmt = Math.max(preciseAmount(S0 * (1 + anchor / 100)), targetAmt + 30);
+    // 让步阶梯：三次让步约占差额的 50% / 30% / 20%，幅度递减（每次至少 ¥10），最后落在目标上
+    const gap = anchorAmt - targetAmt;
+    const d3 = Math.max(10, round10(gap * 0.2));
+    let d2 = Math.max(d3, round10(gap * 0.3));
+    if (gap - d2 - d3 < d2) d2 = Math.max(d3, Math.floor((gap - d3) / 20) * 10);
+    const step2 = anchorAmt - (gap - d2 - d3);
+    const step3 = targetAmt + d3;
+    const pctOf = (amt) => Math.round((amt / S0 - 1) * 1000) / 10;
+    const lowAmt = Math.max(10, round10(S0 * range.low / 100));
+    const highAmt = Math.max(lowAmt + 10, round10(S0 * range.high / 100));
 
     const sorted = factors.filter((x) => !x.hidden).slice().sort((a, b) => b.z - a.z);
     const strengths = sorted.filter((x) => x.z > 0.05);
@@ -200,17 +220,11 @@
       baseProb: Math.round(baseProb * 100),
       prob: Math.round(prob * 100),
       range,
-      rangeAmount: {
-        low: round100(input.salary * range.low / 100),
-        high: round100(input.salary * range.high / 100),
-        annualLow: round100(input.salary * range.low / 100 * input.months),
-        annualHigh: round100(input.salary * range.high / 100 * input.months)
-      },
+      rangeAmount: { low: lowAmt, high: highAmt, annualLow: lowAmt * input.months, annualHigh: highAmt * input.months },
       numbers: {
-        anchorPct: anchor, targetPct: target, floorPct: floor,
-        anchor: preciseAmount(input.salary * (1 + anchor / 100)),
-        target: round100(input.salary * (1 + target / 100)),
-        floor: round100(input.salary * (1 + floor / 100)),
+        anchorPct: pctOf(anchorAmt), targetPct: pctOf(targetAmt), floorPct: pctOf(floorAmt),
+        anchor: anchorAmt, target: targetAmt, floor: floorAmt,
+        ladder: [anchorAmt, step2, step3, targetAmt],
         expectNote
       },
       dims,
@@ -358,18 +372,19 @@
       { t: 'p', text: '为什么要先报价？首轮报价会成为后续讨论的“锚”（Galinsky & Mussweiler, 2001）。在你掌握市场数据的前提下，主动报出有依据的锚点通常更有利。' }
     ];
     if (N.expectNote) numberBlocks.push({ t: 'tip', tone: 'warn', text: N.expectNote });
-    const gap = N.anchor - N.target;
     numberBlocks.push({
       t: 'ladder', title: '让步阶梯（借鉴 FBI Ackerman 模型：幅度递减）',
       items: [
-        { step: '第 1 次报价', amount: money(N.anchor), note: '说完立刻停下，沉默至少 5 秒' },
-        { step: '第 1 次让步', amount: money(preciseAmount(N.target + gap * 0.5)), note: '先用校准问题追问，对方坚持后才让' },
-        { step: '第 2 次让步', amount: money(preciseAmount(N.target + gap * 0.2)), note: '让步变小，同时提出一个交换条件' },
-        { step: '最终落点', amount: money(preciseAmount(N.target)), note: '用精确数字 + 一个非现金诉求收尾，传递“已到极限”' }
+        { step: '第 1 次报价', amount: money(N.ladder[0]), note: '说完立刻停下，沉默至少 5 秒' },
+        { step: '第 1 次让步', amount: money(N.ladder[1]), note: '先用校准问题追问，对方坚持后才让' },
+        { step: '第 2 次让步', amount: money(N.ladder[2]), note: '让步变小，同时提出一个交换条件' },
+        { step: '最终落点', amount: money(N.ladder[3]), note: '用精确数字 + 一个非现金诉求收尾，传递“已到极限”' }
       ]
     });
     const batna = [];
-    if (input.offer === 'has_offer') {
+    if (input.offer === 'has_offer' && !offerLeverage(input)) {
+      batna.push(`你手上的 offer（${money(input.offerSalary)} / 月）不比现在的薪资高，它不是筹码：谈判中不要提起它。你真正的底牌是价值清单和市场数据。`);
+    } else if (input.offer === 'has_offer') {
       batna.push(`你的 BATNA（谈判破裂时的最佳替代方案）是手上的 offer（${money(input.offerSalary)} / 月）。它让你有底气，但只在你“真的愿意走”时才是筹码。`);
       if (input.willingToLeave === 'no') batna.push('你表示不想走——那就不要把 offer 当威胁使用，只把它当作“市场对我的定价”这一客观依据。');
     } else if (input.offer === 'interviewing') {
@@ -428,7 +443,7 @@
       `【${input.name || '姓名'}｜${roleLabel}｜${L('level', input.level)}】过去 12 个月价值清单`,
       '',
       '一、核心成果（动作 + 数字 + 对公司的影响）',
-      input.achievementText ? '· ' + input.achievementText : '· （用一句话写最重要的成果，必须带数字）',
+      input.achievementText ? '· ' + achievementClause(input) : '· （用一句话写最重要的成果，必须带数字）',
       ...achvLines,
       '',
       `二、职责变化：入职 / 上次调薪时我负责 __；现在我负责 __${isLead ? '，团队从 __ 人扩到 __ 人' : ''}`,
@@ -457,7 +472,7 @@
       unknown: `我参考了招聘平台上同城同级别${roleLabel}岗位的薪资区间（面谈前务必完成调研并填入数字）：大约在 __ 到 __。`
     }[input.market];
     const valueLine = input.achievementText
-      ? `我简单回顾一下过去这段时间的工作：${input.achievementText}。`
+      ? `我简单回顾一下过去这段时间的工作：${achievementClause(input)}。`
       : '我简单回顾一下过去这段时间的三个关键成果：第一，__；第二，__；第三，__（每条都带数字）。';
     const askLine = input.goal === 'promotion'
       ? `所以，我希望能讨论两件事：一是职级晋升到 __，二是月薪相应调整到 ${money(N.anchor)}。`
@@ -490,7 +505,7 @@
     });
 
     /* 7. 反驳应对 */
-    const hasOffer = input.offer === 'has_offer';
+    const hasOffer = offerLeverage(input);
     const objections = [
       {
         q: '“今年预算很紧，真的没有额度。”',
@@ -536,13 +551,15 @@
       },
       {
         q: '“你是不是有别的 offer 了？”',
-        tag: hasOffer || input.offer === 'interviewing' ? '高概率' : '',
+        tag: input.offer !== 'none' ? '高概率' : '',
         meaning: '他在评估你的离职风险。实话实说，但不威胁。',
         a: hasOffer
           ? (input.willingToLeave === 'no'
             ? '确实有机会找过我，但我更希望在这里长期发展，所以第一时间来找您聊，而不是拿它来谈条件。'
             : '确实有公司给了我机会，薪资在 __ 左右。但我更希望留在这里，所以先来和您聊。如果我们能找到一个合适的方案，我会全力投入。')
-          : '没有。正因为我想在这里长期发展，所以才认真地来和您谈这件事。',
+          : input.offer !== 'none'
+            ? '有接触过一些机会，但我更希望在这里长期发展，所以才认真地来和您谈这件事。'
+            : '没有。正因为我想在这里长期发展，所以才认真地来和您谈这件事。',
         tech: '绝不虚张声势：一旦被回“那你去吧”，你会非常被动'
       },
       {
@@ -663,24 +680,25 @@
     };
   }
 
-  // 自由补充信息的关键词规则（服务端配置了 AI 时，会再叠加一份 AI 深度定制分析）
+  // 自由补充信息的关键词规则（服务端配置了 AI 时，会再叠加一份 AI 深度定制分析）。
+  // 只看“补充情况”，不看成果描述——“优化算法”“推动事业部增长”这类成果用词不应触发处境建议
   function extraAdvice(input) {
-    const t = (input.extra || '') + ' ' + (input.achievementText || '');
+    const t = input.extra || '';
     const tips = [];
     const rules = [
-      [/裁员|优化|降本|缩编|毕业|减员/, '你提到了裁员 / 降本：此时最有效的诉求是“职责与回报对等”和“书面复议承诺”。同时悄悄改善 BATNA（更新简历、联系猎头），这既是保险，也会让你谈判时更从容。'],
+      [/裁员|被优化|优化名单|减员|缩编|降薪|(公司|部门|团队).{0,6}(降本|收缩|砍预算)/, '你提到了裁员 / 降本：此时最有效的诉求是“职责与回报对等”和“书面复议承诺”。同时悄悄改善 BATNA（更新简历、联系猎头），这既是保险，也会让你谈判时更从容。'],
       [/新老板|新领导|换了领导|空降|新上司/, '你提到了新领导：新领导还不了解你的历史贡献。先用 2-4 周通过周报 / 1 对 1 建立认知，再谈薪资；第一次谈话可以先问“您对这个岗位的期待是什么”，把他的期待变成你的加薪标准。'],
       [/加班|996|工作量|一个人干|几个人的活|超负荷/, '你提到工作量大：不要说“我很辛苦”，而要说“我的职责范围从 A 扩大到了 A+B+C，相当于 __ 个岗位的工作量”。辛苦不值钱，职责范围才值钱。'],
       [/带团队|带人|下属|管理团队|组长/, '你提到在带人：如果还没有对应的 Title，把“补齐职级”作为第一诉求——职级会抬高你的薪资带宽上限。'],
-      [/offer|跳槽|猎头|面试|离职/i, '你提到了外部机会：offer 只在你真的愿意走时才是筹码。不想走的话，就把它当“市场定价依据”，而不是最后通牒。'],
+      [/offer|跳槽|猎头|面试(?!官)|离职/i, '你提到了外部机会：offer 只在你真的愿意走时才是筹码。不想走的话，就把它当“市场定价依据”，而不是最后通牒。'],
       [/股权|期权|股票|RSU/i, '你提到了股权：问清楚三件事——授予数量、行权价 / 归属期、公司估值或股价依据。现金谈不动时，股权是很好的交换条件。'],
       [/怀孕|产假|孕期|哺乳/, '依据《女职工劳动保护特别规定》，用人单位不得因怀孕、生育、哺乳降低女职工工资。谈判中只谈价值和贡献；如遭遇不公平对待，保留证据并可咨询劳动监察部门。'],
       [/试用期|转正/, '你提到试用期 / 转正：转正是天然的谈薪节点。提前 2 周准备转正答辩材料，把试用期成果量化，并在答辩中自然地提出薪资期望。'],
       [/外包|派遣|驻场/, '你是外包 / 派遣身份：薪资通常由外包公司决定，但甲方的评价是关键筹码。先争取甲方负责人的书面认可，再找外包公司谈。'],
-      [/国企|央企|事业|编制|体制内/, '体制内薪资主要跟岗位等级、职称和绩效系数走。谈判重点放在“岗级晋升”“职称评定”“绩效系数”，而不是直接谈月薪数字。'],
-      [/同事|新人.*(比我|工资高)|倒挂/, '你提到薪资倒挂：不要说出具体同事的名字和薪资。用“我了解到新入职的同级别岗位市场价在 __ 左右”来表达，把问题从“不公平”转化为“市场定价”。'],
+      [/国企|央企|事业单位|编制|体制内/, '体制内薪资主要跟岗位等级、职称和绩效系数走。谈判重点放在“岗级晋升”“职称评定”“绩效系数”，而不是直接谈月薪数字。'],
+      [/倒挂|(同事|新人|新来的|新招的).{0,12}(比我高|比我多|工资高|薪资高|工资比我|薪资比我|开得比我)/, '你提到薪资倒挂：不要说出具体同事的名字和薪资。用“我了解到新入职的同级别岗位市场价在 __ 左右”来表达，把问题从“不公平”转化为“市场定价”。'],
       [/画饼|口头承诺|答应过|说好的/, '你提到老板以前有口头承诺：这次务必书面化。可以说：“上次您提到 __，这次我们能不能把具体时间和标准定下来？”'],
-      [/房贷|结婚|生娃|孩子|买房|家里/, '你提到了个人生活压力：可以理解，但不要把它作为加薪理由——老板只为价值付钱。把它留在心里，作为你认真准备的动力。'],
+      [/房贷|车贷|结婚|生娃|生孩子|养娃|买房|家里.{0,4}(压力|开销|困难|缺钱)/, '你提到了个人生活压力：可以理解，但不要把它作为加薪理由——老板只为价值付钱。把它留在心里，作为你认真准备的动力。'],
       [/远程|异地|搬家|通勤/, '你提到了工作地点 / 通勤：如果现金空间有限，“远程 / 弹性工作”是一个高价值的交换条件。']
     ];
     rules.forEach(([re, tip]) => { if (re.test(t)) tips.push(tip); });

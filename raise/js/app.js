@@ -7,6 +7,8 @@
   const API = (CFG.apiBase || '').replace(/\/$/, '');
   const ORDERS_KEY = 'raise_orders';
   const DRAFT_KEY = 'raise_draft';
+  const PAID_KEY = 'raise_paid_previews';   // 诊断 id → 已支付订单 id，避免同一份诊断重复购买
+  const PENDING_KEY = 'raise_pending_order'; // 跳转 H5 支付前记下订单对应的诊断，支付回来后可以回到付费页
 
   const state = {
     mode: null,          // 'live' | 'demo'
@@ -57,6 +59,7 @@
       if (!m) return;
       $('#modal').classList.add('hidden');
       if (m === 'ok' && opts.onOk) opts.onOk();
+      if (m === 'cancel' && opts.onCancel) opts.onCancel();
     };
   }
 
@@ -73,7 +76,7 @@
       credentials: 'include'
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || ('请求失败 ' + res.status));
+    if (!res.ok) throw Object.assign(new Error(data.error || ('请求失败 ' + res.status)), { status: res.status });
     return data;
   }
 
@@ -85,17 +88,35 @@
     });
   }
 
-  async function detectMode() {
+  // 返回 { ok } 后端可用；{ absent } 确定没有后端（404 或非 JSON，例如纯静态托管）；{ error } 网络问题
+  async function probeHealth(ms) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), ms);
     try {
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 3000);
       const res = await fetch(API + '/api/health', { signal: ctrl.signal, credentials: 'include' });
+      const data = await res.json().catch(() => null);
+      if (res.ok && data && data.ok) return { ok: data };
+      return res.status === 404 || !data ? { absent: true } : { error: true };
+    } catch (e) {
+      return { error: true };
+    } finally {
       clearTimeout(t);
-      const data = await res.json();
-      if (data && data.ok) { state.mode = 'live'; state.server = data; return; }
-    } catch (e) { /* 无后端 → 演示模式 */ }
-    state.mode = 'demo';
-    await loadScript('js/engine.js');
+    }
+  }
+
+  // 网络慢或后端临时故障时不能退回演示模式（后端不提供 engine.js），而是提示用户重试
+  async function detectMode() {
+    let r = await probeHealth(3000);
+    if (r.error) r = await probeHealth(8000);
+    if (r.ok) { state.mode = 'live'; state.server = r.ok; return; }
+    if (r.absent) {
+      try { await loadScript('js/engine.js'); state.mode = 'demo'; return; } catch (e) { /* 落到 offline */ }
+    }
+    state.mode = 'offline';
+  }
+
+  function offlineToast() {
+    toast('网络不太稳定，请检查网络后刷新页面重试', 3500);
   }
 
   /* ---------------- 问卷 ---------------- */
@@ -166,7 +187,7 @@
         return `<button type="button" class="chip ${on ? 'on' : ''}" data-key="${f.key}" data-val="${esc(o[0])}" data-multi="${f.type === 'multi' ? 1 : 0}">${esc(o[1])}${o[2] ? `<small>${esc(o[2])}</small>` : ''}</button>`;
       }).join('') + '</div>';
     } else if (f.type === 'number') {
-      body = `<div class="input-wrap"><input class="input" type="number" inputmode="decimal" data-key="${f.key}" value="${v || ''}" min="${f.min}" max="${f.max}" placeholder="请输入"><span class="unit">${esc(f.unit)}</span></div>`;
+      body = `<div class="input-wrap"><input class="input" type="number" inputmode="decimal" data-key="${f.key}" value="${v === '' || v == null ? '' : v}" min="${f.min}" max="${f.max}" placeholder="请输入"><span class="unit">${esc(f.unit)}</span></div>`;
     } else if (f.type === 'text') {
       body = `<input class="input" type="text" maxlength="20" data-key="${f.key}" value="${esc(v)}" placeholder="${esc(f.placeholder || '')}">`;
     } else if (f.type === 'textarea') {
@@ -262,6 +283,8 @@
   const RESEARCH_SOCIAL = { type: 'research', label: '主动开口的人里', count: '70%', text: '获得了涨薪（PayScale 16 万人调研）' };
 
   async function submit() {
+    if (state.mode === 'offline') { offlineToast(); return; }
+    $('#s-loading h2').textContent = '正在生成你的涨薪诊断';
     show('s-loading');
     const anim = animateLoading(2600);
     try {
@@ -336,7 +359,7 @@
       <div class="metric-row">
         <div class="metric-card">
           <div class="metric-label">预计涨幅</div>
-          <div class="metric-value gold range">${pct(p.range.low)}–${pct(p.range.high)}</div>
+          <div class="metric-value gold range">${pct(p.range.low)}–<wbr>${pct(p.range.high)}</div>
           <div class="metric-note">每月多 <b>${money(ra.low)}–${money(ra.high)}</b><br>每年多 ${money(ra.annualLow)}–${money(ra.annualHigh)}</div>
         </div>
         <div class="metric-card">
@@ -367,10 +390,36 @@
 
   /* ---------------- 支付 ---------------- */
 
-  function rememberOrder(id) {
-    const list = store.get(ORDERS_KEY, []);
-    if (list.indexOf(id) < 0) list.unshift(id);
+  // 只记录已确认支付的订单，供首页“查看我已购买的方案”使用
+  function rememberPaid(orderId, previewId) {
+    const list = store.get(ORDERS_KEY, []).filter((x) => x !== orderId);
+    list.unshift(orderId);
     store.set(ORDERS_KEY, list.slice(0, 10));
+    if (previewId) {
+      const map = store.get(PAID_KEY, {});
+      map[previewId] = orderId;
+      store.set(PAID_KEY, map);
+    }
+  }
+
+  function paidOrderFor(previewId) {
+    return previewId ? store.get(PAID_KEY, {})[previewId] : null;
+  }
+
+  // 离开“确认支付中”的等待页：回到付费页，没有诊断数据时回首页
+  async function leaveLoading() {
+    $('#s-loading h2').textContent = '正在生成你的涨薪诊断';
+    if (!state.preview && state.previewId) {
+      try { applyPreview(await api('/api/preview/' + encodeURIComponent(state.previewId))); } catch (e) { /* 诊断已过期 */ }
+    }
+    if (state.preview) renderPay(); else show('s-home');
+  }
+
+  function applyPreview(data) {
+    state.preview = data.preview;
+    state.social = data.social || RESEARCH_SOCIAL;
+    if (data.price && state.server) state.server.price = data.price;
+    if (data.input) state.input = Object.assign({}, state.input, data.input);
   }
 
   async function pay() {
@@ -383,6 +432,9 @@
       });
       return;
     }
+    if (state.mode === 'offline') { offlineToast(); return; }
+    const bought = paidOrderFor(state.previewId);
+    if (bought) { waitPaid(bought, state.previewId); return; }
     const srv = state.server;
     const btn = $('#payBtn');
     let channel = srv.pay.provider === 'mock' ? 'mock' : (isWeChat() ? 'jsapi' : 'h5');
@@ -396,19 +448,21 @@
     try {
       const res = await api('/api/order', { previewId: state.previewId, channel });
       state.orderId = res.orderId;
-      rememberOrder(res.orderId);
       if (res.mock) {
         modal({
           title: '测试支付',
           body: `服务端处于测试支付模式（PAY_PROVIDER=mock）。订单金额 ¥${res.amountYuan}，点击确认模拟支付成功。`,
           ok: '确认支付',
-          onOk: async () => { await api('/api/pay/mock/confirm', { orderId: res.orderId }); waitPaid(res.orderId); }
+          onOk: async () => {
+            try { await api('/api/pay/mock/confirm', { orderId: res.orderId }); waitPaid(res.orderId, state.previewId); } catch (e) { toast(e.message); }
+          }
         });
       } else if (res.h5Url) {
+        store.set(PENDING_KEY, { orderId: res.orderId, previewId: state.previewId });
         location.href = res.h5Url;
       } else if (res.jsapi) {
         const invoke = () => window.WeixinJSBridge.invoke('getBrandWCPayRequest', res.jsapi, (r) => {
-          if (r.err_msg === 'get_brand_wcpay_request:ok') waitPaid(res.orderId);
+          if (r.err_msg === 'get_brand_wcpay_request:ok') waitPaid(res.orderId, state.previewId);
           else if (r.err_msg === 'get_brand_wcpay_request:cancel') toast('支付已取消');
           else toast('支付未完成，请重试');
         });
@@ -422,29 +476,31 @@
     }
   }
 
-  async function waitPaid(orderId) {
+  async function waitPaid(orderId, previewId) {
     show('s-loading');
     document.querySelectorAll('#loadingSteps li').forEach((li) => li.classList.add('done'));
     document.querySelector('#s-loading h2').textContent = '正在确认支付结果…';
     for (let i = 0; i < 40; i++) {
       try {
         const o = await api('/api/order/' + encodeURIComponent(orderId));
-        if (o.status === 'paid') { await loadReport(orderId); return; }
+        if (o.status === 'paid') { await loadReport(orderId, previewId); return; }
       } catch (e) { /* 继续轮询 */ }
       await sleep(1500);
     }
-    document.querySelector('#s-loading h2').textContent = '正在生成你的涨薪诊断';
     modal({
       title: '暂未确认到支付',
       body: '如果你已完成支付，请稍后点击“重新查询”。如有疑问请联系客服并提供订单号：' + orderId,
       ok: '重新查询', cancelText: '返回',
-      onOk: () => waitPaid(orderId)
+      onOk: () => waitPaid(orderId, previewId),
+      onCancel: leaveLoading
     });
   }
 
-  async function loadReport(orderId) {
+  async function loadReport(orderId, previewId) {
     const data = await api('/api/report/' + encodeURIComponent(orderId));
     state.orderId = orderId;
+    rememberPaid(orderId, previewId);
+    $('#s-loading h2').textContent = '正在生成你的涨薪诊断';
     showReport(data.report, data.ai);
     if (data.ai && data.ai.status === 'pending') pollAi(orderId);
   }
@@ -457,7 +513,7 @@
         if (ai.status !== 'pending') { renderAi(ai); return; }
       } catch (e) { /* 继续 */ }
     }
-    renderAi({ status: 'error' });
+    renderAi({ status: 'timeout' });
   }
 
   /* ---------------- 方案渲染 ---------------- */
@@ -492,8 +548,11 @@
     if (ai.status === 'pending') {
       return `<section class="sec" id="sec-ai"><h2><span>🤖</span>AI 深度定制</h2><div class="ai-pending"><div class="spinner"></div>AI 正在结合你的补充情况撰写专属建议，约 1 分钟…</div></section>`;
     }
+    if (ai.status === 'timeout') {
+      return `<section class="sec" id="sec-ai"><h2><span>🤖</span>AI 深度定制</h2><p>AI 定制还在生成中。稍后在首页点“查看我已购买的方案”重新打开即可看到，其余方案内容不受影响。</p></section>`;
+    }
     if (ai.status === 'error' || !ai.sections) {
-      return `<section class="sec" id="sec-ai"><h2><span>🤖</span>AI 深度定制</h2><p>AI 定制暂时没有生成成功，稍后刷新页面会自动重试。上面的完整方案不受影响。</p></section>`;
+      return `<section class="sec" id="sec-ai"><h2><span>🤖</span>AI 深度定制</h2><p>AI 定制这次没有生成成功，其余方案内容不受影响。如需帮助，请联系客服并提供下方的订单号。</p></section>`;
     }
     return ai.sections.map((s) => sectionHtml(Object.assign({ icon: '🤖' }, s, { id: 'ai-' + s.id }))).join('');
   }
@@ -521,7 +580,9 @@
     const html = sections.map((s, i) => sectionHtml(s) + (i === firstIdx - 1 ? aiHtml(ai) : '')).join('');
     $('#reportBody').innerHTML = html + `
       <div class="report-actions">
-        <button class="btn btn-ghost" data-action="print">保存为 PDF</button>
+        ${isWeChat() && state.orderId
+          ? '<button class="btn btn-ghost" data-action="copy-link">复制方案链接</button>'
+          : (isWeChat() ? '' : '<button class="btn btn-ghost" data-action="print">保存为 PDF</button>')}
         <button class="btn btn-ghost" data-action="restart">重新测评</button>
       </div>` + outcome +
       (state.orderId ? `<p class="disclaimer" style="text-align:center">订单号：${esc(state.orderId)}（可在首页“查看我已购买的方案”再次打开）</p>` : '');
@@ -562,11 +623,13 @@
         else if (act === 'prev') prev();
         else if (act === 'pay') pay();
         else if (act === 'print') window.print();
-        else if (act === 'restart') { state.step = 0; renderStep(); show('s-form'); }
-        else if (act === 'my-report') {
-          const list = store.get(ORDERS_KEY, []);
-          if (list.length) loadReport(list[0]).catch((err) => toast(err.message));
+        else if (act === 'copy-link') {
+          // 微信内置浏览器不支持打印：复制链接到系统浏览器打开后再保存
+          copyText(location.origin + location.pathname + '?order=' + encodeURIComponent(state.orderId))
+            .then(() => toast('已复制。可在浏览器中打开后保存为 PDF（请勿分享给他人）', 3500));
         }
+        else if (act === 'restart') { state.step = 0; renderStep(); show('s-form'); }
+        else if (act === 'my-report') openMyReport();
         return;
       }
       const cp = e.target.closest('[data-copy]');
@@ -578,27 +641,52 @@
     $('#formBody').addEventListener('input', onFormInput);
   }
 
+  // 依次尝试本机记录的已购订单，打开第一个可用的；失效的记录顺手清掉
+  async function openMyReport() {
+    for (const id of store.get(ORDERS_KEY, [])) {
+      try { await loadReport(id); return; } catch (e) {
+        if (e.status !== 402 && e.status !== 404) { toast(e.message); return; }
+        store.set(ORDERS_KEY, store.get(ORDERS_KEY, []).filter((x) => x !== id));
+      }
+    }
+    $('#myReportBtn').classList.add('hidden');
+    toast('没有找到已购买的方案');
+  }
+
+  // 恢复草稿：被清空的数字字段保持为空，不能被校验函数补成最小值
+  function restoreDraft(draft) {
+    const input = S.normalizeInput(Object.assign({}, S.DEFAULTS, draft));
+    ['salary', 'years', 'expect', 'offerSalary'].forEach((k) => { if (draft[k] === '') input[k] = ''; });
+    return input;
+  }
+
   async function init() {
     bind();
     const draft = store.get(DRAFT_KEY, null);
-    if (draft) state.input = S.normalizeInput(Object.assign({}, S.DEFAULTS, draft));
-    await detectMode();
+    if (draft && typeof draft === 'object') state.input = restoreDraft(draft);
     const params = new URLSearchParams(location.search);
-    if (state.mode === 'live') {
-      if (store.get(ORDERS_KEY, []).length) $('#myReportBtn').classList.remove('hidden');
-      const order = params.get('order');
-      const resume = params.get('resume');
-      if (order) { rememberOrder(order); waitPaid(order); return; }
-      if (resume) {
-        try {
-          const data = await api('/api/preview/' + encodeURIComponent(resume));
-          state.previewId = resume;
-          state.preview = data.preview;
-          state.social = data.social || RESEARCH_SOCIAL;
-          state.input = Object.assign(state.input, data.input || {});
-          renderPay();
-        } catch (e) { toast('诊断已过期，请重新测评'); }
-      }
+    const order = params.get('order');
+    const resume = params.get('resume');
+    // 链接参数只用一次：刷新不会重复进入付费页，转发出去的链接也不带别人的诊断或订单
+    if (order || resume) history.replaceState(null, '', location.pathname);
+    await detectMode();
+    if (state.mode === 'offline') { offlineToast(); return; }
+    if (state.mode !== 'live') return;
+    if (store.get(ORDERS_KEY, []).length) $('#myReportBtn').classList.remove('hidden');
+    if (order) {
+      const pending = store.get(PENDING_KEY, null);
+      state.previewId = pending && pending.orderId === order ? pending.previewId : null;
+      waitPaid(order, state.previewId);
+      return;
+    }
+    if (resume) {
+      state.previewId = resume;
+      const bought = paidOrderFor(resume);
+      if (bought) { waitPaid(bought, resume); return; }
+      try {
+        applyPreview(await api('/api/preview/' + encodeURIComponent(resume)));
+        renderPay();
+      } catch (e) { toast('诊断已过期，请重新测评'); }
     }
   }
 

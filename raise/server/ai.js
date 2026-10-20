@@ -107,11 +107,15 @@ class AiCoach {
     return toSections(JSON.parse(text));
   }
 
-  // 可重试：限流、服务端错误、网络错误
+  // 可重试：限流、过载 / 服务端错误、网络错误（包括流式传输中途出错：此时 APIError 没有 status，或是连接中断）
   static retryable(err) {
+    if (err instanceof Anthropic.APIUserAbortError) return false;
     if (err instanceof Anthropic.RateLimitError || err instanceof Anthropic.APIConnectionError) return true;
-    if (err instanceof Anthropic.APIError) return (err.status || 0) >= 500;
-    return false;
+    if (err instanceof Anthropic.APIError) {
+      if (err.status === undefined) return true;
+      return err.status >= 500 || ['overloaded_error', 'api_error', 'rate_limit_error'].indexOf(err.type) >= 0;
+    }
+    return err instanceof Anthropic.AnthropicError;
   }
 }
 

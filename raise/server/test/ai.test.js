@@ -34,3 +34,16 @@ test('拒绝或截断时报错，交由上层重试或降级', async () => {
   await assert.rejects(coachWith({ stop_reason: 'refusal', content: [] }).coach.generate(input, report), /拒绝/);
   await assert.rejects(coachWith({ stop_reason: 'max_tokens', content: [] }).coach.generate(input, report), /截断/);
 });
+
+test('可重试判断：流式中途过载 / 断连可重试，参数错误与主动取消不重试', () => {
+  const sdk = require('@anthropic-ai/sdk');
+  const A = sdk.default || sdk;
+  const midStream = new A.APIError(undefined, { type: 'error', error: { type: 'overloaded_error' } }, 'overloaded', undefined);
+  assert.equal(AiCoach.retryable(midStream), true);
+  assert.equal(AiCoach.retryable(new A.AnthropicError('terminated')), true);
+  assert.equal(AiCoach.retryable(new A.APIConnectionError({ message: 'x' })), true);
+  assert.equal(AiCoach.retryable(new A.APIError(529, { type: 'error', error: { type: 'overloaded_error' } }, 'x', undefined)), true);
+  assert.equal(AiCoach.retryable(new A.APIError(400, { type: 'error', error: { type: 'invalid_request_error' } }, 'x', undefined)), false);
+  assert.equal(AiCoach.retryable(new A.APIUserAbortError()), false);
+  assert.equal(AiCoach.retryable(new Error('boom')), false);
+});
