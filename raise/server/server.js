@@ -91,13 +91,14 @@ async function readJson(req) {
   return body && typeof body === 'object' && !Array.isArray(body) ? body : {};
 }
 
-// 反向代理需设置 X-Real-IP $remote_addr；没有时取 X-Forwarded-For 最右一项（由最近一层代理追加，客户端无法伪造）
+// 反向代理需追加 X-Forwarded-For（nginx: $proxy_add_x_forwarded_for）。取最右一项：它由最近一层代理写入，
+// 客户端自带的值只会出现在它左边。没有 X-Forwarded-For 时才用代理覆盖写入的 X-Real-IP
 function clientIp(req) {
   if (TRUST_PROXY) {
-    const real = req.headers['x-real-ip'];
-    if (real) return String(real).trim();
     const xff = req.headers['x-forwarded-for'];
     if (xff) return String(xff).split(',').pop().trim();
+    const real = req.headers['x-real-ip'];
+    if (real) return String(real).trim();
   }
   return (req.socket.remoteAddress || '').replace(/^::ffff:/, '');
 }
@@ -155,25 +156,32 @@ function priceInfo() {
   return { fen: PRICE_FEN, yuan: yuan(PRICE_FEN), originalYuan: ORIGINAL_PRICE_FEN > PRICE_FEN ? yuan(ORIGINAL_PRICE_FEN) : null };
 }
 
+// 订单创建时保存一份问卷与分组，方案生成不依赖诊断记录是否还在（兼容旧订单）
+function orderInput(order) {
+  return order.input || (store.get('previews', order.previewId) || {}).input || Schema.normalizeInput({});
+}
+
+function orderSegment(order) {
+  return order.segment || (store.get('previews', order.previewId) || {}).segment || Schema.segmentOf(orderInput(order));
+}
+
 function markPaid(order, transactionId) {
   if (order.status === 'paid') return;
   order.status = 'paid';
   order.paidAt = Date.now();
   order.transactionId = transactionId || '';
-  const preview = store.get('previews', order.previewId);
-  store.bump(preview.segment.key, 'paid');
+  store.bump(orderSegment(order).key, 'paid');
   store.save();
   startAi(order);
 }
 
 function startAi(order) {
   if (!ai || aiJobs.has(order.id)) return;
-  const preview = store.get('previews', order.previewId);
+  const input = orderInput(order);
   order.ai = { status: 'pending', attempts: ((order.ai && order.ai.attempts) || 0) + 1 };
   aiJobs.add(order.id);
   store.save();
-  const report = Engine.buildReport(preview.input);
-  ai.generate(preview.input, report)
+  ai.generate(input, Engine.buildReport(input))
     .then((sections) => { order.ai = { status: 'done', sections, attempts: order.ai.attempts }; })
     .catch((err) => {
       console.error('[AI] 订单', order.id, '生成失败：', err.message);
@@ -243,6 +251,8 @@ route('POST', /^\/api\/order$/, async (req) => {
   const order = {
     id: 'R' + newId(14),
     previewId: preview.id,
+    input: preview.input,
+    segment: preview.segment,
     amountFen: PRICE_FEN,
     description: '涨薪军师-专属涨薪谈判方案',
     notifyUrl: PUBLIC_BASE_URL + '/api/pay/wechat/notify',
@@ -315,8 +325,7 @@ route('GET', /^\/api\/report\/(R[a-f0-9]{28})$/, async (req, m) => {
   const order = findOrder(m[1]);
   if (order) await syncWechatOrder(order);
   const paid = paidOrder(m[1]);
-  const preview = store.get('previews', paid.previewId);
-  return { report: Engine.buildReport(preview.input), ai: aiState(paid) };
+  return { report: Engine.buildReport(orderInput(paid)), ai: aiState(paid) };
 });
 
 route('GET', /^\/api\/report\/(R[a-f0-9]{28})\/ai$/, (req, m) => aiState(paidOrder(m[1])));
@@ -329,7 +338,7 @@ route('POST', /^\/api\/outcome$/, async (req) => {
   const result = ['success', 'partial', 'fail'].indexOf(body.result) >= 0 ? body.result : null;
   if (!result) throw httpError(400, '参数错误');
   if (order.outcome === result) return { ok: true };
-  const seg = store.get('previews', order.previewId).segment;
+  const seg = orderSegment(order);
   const wasHelped = order.outcome === 'success' || order.outcome === 'partial';
   const isHelped = result === 'success' || result === 'partial';
   if (!wasHelped && isHelped) store.bump(seg.key, 'helped', 1);

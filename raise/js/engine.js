@@ -39,7 +39,8 @@
   // 入职不满 1 年且没调过薪，不算“该涨了”，按 6-12 个月处理
   const lastRaiseOf = (input) => (input.tenure === 'lt1' && input.lastRaise === 'never' ? '6to12' : input.lastRaise);
   // 用户填写的成果去掉换行和结尾标点，方便嵌入到句子里
-  const achievementClause = (input) => (input.achievementText || '').replace(/\s*\n+\s*/g, '；').replace(/[。！!？?.；;，,、\s]+$/, '');
+  const achievementClause = (input) => (input.achievementText || '').split(/\n+/)
+    .map((line) => line.trim().replace(/[。！!？?.；;，,、：:\s]+$/, '')).filter(Boolean).join('；');
 
   /* ---------------- 涨幅模型 ---------------- */
 
@@ -131,7 +132,7 @@
       {
         key: 'market', label: '市场筹码',
         value: clamp({ below20: 82, below10: 68, equal: 48, above: 28, unknown: 40 }[input.market] +
-          (offerLeverage(input) ? 20 : input.offer === 'none' ? 0 : 10), 5, 100)
+          (offerLeverage(input) ? 20 : input.offer === 'interviewing' ? 10 : 0), 5, 100)
       },
       {
         key: 'timing', label: '时机窗口',
@@ -181,14 +182,8 @@
 
     // 目标数字
     let target = input.expect;
-    let expectNote = '';
-    if (input.expect < range.mid) {
-      target = range.mid;
-      expectNote = `你的期望（${input.expect}%）偏保守，按你的筹码可以争取到 ${pct(range.mid)} 左右。`;
-    } else if (input.expect > range.high) {
-      target = range.high;
-      expectNote = `你的期望（${input.expect}%）高于筹码能支撑的区间，建议目标定在 ${pct(range.high)}，超出部分用非现金方式争取。`;
-    }
+    if (input.expect < range.mid) target = range.mid;
+    else if (input.expect > range.high) target = range.high;
     target = round05(target);
     let anchor = round05(Math.max(target + 2, target * 1.25));
     if (range.offerPremium > 0 && input.willingToLeave !== 'no') anchor = round05(Math.max(anchor, Math.min(range.offerPremium, 50)));
@@ -196,7 +191,9 @@
     // 金额保证 当前薪资 < 底线 < 目标 < 锚点；低薪时按百分比取整可能撞在一起，这里逐级拉开
     const S0 = input.salary;
     const floorAmt = Math.max(round10(S0 * (1 + range.low / 100)), S0 + 10);
-    const targetAmt = Math.max(preciseAmount(S0 * (1 + target / 100)), floorAmt + 10);
+    // 目标只往下取精确数，避免超出用户期望或推荐区间
+    const targetRaw = round10(S0 * (1 + target / 100));
+    const targetAmt = Math.max(targetRaw % 100 === 0 ? targetRaw - 10 : targetRaw, floorAmt + 10);
     const anchorAmt = Math.max(preciseAmount(S0 * (1 + anchor / 100)), targetAmt + 30);
     // 让步阶梯：三次让步约占差额的 50% / 30% / 20%，幅度递减（每次至少 ¥10），最后落在目标上
     const gap = anchorAmt - targetAmt;
@@ -206,6 +203,12 @@
     const step2 = anchorAmt - (gap - d2 - d3);
     const step3 = targetAmt + d3;
     const pctOf = (amt) => Math.round((amt / S0 - 1) * 1000) / 10;
+    let expectNote = '';
+    if (input.expect < range.mid) {
+      expectNote = `你的期望（${input.expect}%）偏保守，按你的筹码可以争取到 ${pct(pctOf(targetAmt))} 左右。`;
+    } else if (input.expect > range.high) {
+      expectNote = `你的期望（${input.expect}%）高于筹码能支撑的区间，建议目标定在 ${pct(pctOf(targetAmt))}，超出部分用非现金方式争取。`;
+    }
     const lowAmt = Math.max(10, round10(S0 * range.low / 100));
     const highAmt = Math.max(lowAmt + 10, round10(S0 * range.high / 100));
 
@@ -686,17 +689,20 @@
     const t = input.extra || '';
     const tips = [];
     const rules = [
-      [/裁员|被优化|优化名单|减员|缩编|降薪|(公司|部门|团队).{0,6}(降本|收缩|砍预算)/, '你提到了裁员 / 降本：此时最有效的诉求是“职责与回报对等”和“书面复议承诺”。同时悄悄改善 BATNA（更新简历、联系猎头），这既是保险，也会让你谈判时更从容。'],
+      [/裁员|裁人|被优化|优化名单|人员优化|优化(了|掉)?.{0,4}(一批人|一批同事|人员|员工|同事|\d+\s*个?人)|被毕业|毕业了.{0,4}(人|批|同事)|降本增效|减员|缩编|降薪|(大环境|到处|行业|整个公司).{0,6}(降本|收缩|砍预算)/, '你提到了裁员 / 降本：此时最有效的诉求是“职责与回报对等”和“书面复议承诺”。同时悄悄改善 BATNA（更新简历、联系猎头），这既是保险，也会让你谈判时更从容。'],
       [/新老板|新领导|换了领导|空降|新上司/, '你提到了新领导：新领导还不了解你的历史贡献。先用 2-4 周通过周报 / 1 对 1 建立认知，再谈薪资；第一次谈话可以先问“您对这个岗位的期待是什么”，把他的期待变成你的加薪标准。'],
       [/加班|996|工作量|一个人干|几个人的活|超负荷/, '你提到工作量大：不要说“我很辛苦”，而要说“我的职责范围从 A 扩大到了 A+B+C，相当于 __ 个岗位的工作量”。辛苦不值钱，职责范围才值钱。'],
       [/带团队|带人|下属|管理团队|组长/, '你提到在带人：如果还没有对应的 Title，把“补齐职级”作为第一诉求——职级会抬高你的薪资带宽上限。'],
-      [/offer|跳槽|猎头|面试(?!官)|离职/i, '你提到了外部机会：offer 只在你真的愿意走时才是筹码。不想走的话，就把它当“市场定价依据”，而不是最后通牒。'],
+      [/offer|跳槽|猎头|(在|出去|去别家|外面)面试|面试(了|过)?(几|一些|别的|其他|外面|新)?(家|个)?(公司|机会)|(我|想|打算|准备|考虑).{0,4}离职|提离职|裸辞/i,
+        input.offer === 'has_offer' && !offerLeverage(input)
+          ? '你提到了外部机会：但你手上的 offer 不比现在的薪资高，谈判中不要提它，否则只会拉低老板对你市场价的判断。'
+          : '你提到了外部机会：offer 只在你真的愿意走时才是筹码。不想走的话，就把它当“市场定价依据”，而不是最后通牒。'],
       [/股权|期权|股票|RSU/i, '你提到了股权：问清楚三件事——授予数量、行权价 / 归属期、公司估值或股价依据。现金谈不动时，股权是很好的交换条件。'],
       [/怀孕|产假|孕期|哺乳/, '依据《女职工劳动保护特别规定》，用人单位不得因怀孕、生育、哺乳降低女职工工资。谈判中只谈价值和贡献；如遭遇不公平对待，保留证据并可咨询劳动监察部门。'],
       [/试用期|转正/, '你提到试用期 / 转正：转正是天然的谈薪节点。提前 2 周准备转正答辩材料，把试用期成果量化，并在答辩中自然地提出薪资期望。'],
       [/外包|派遣|驻场/, '你是外包 / 派遣身份：薪资通常由外包公司决定，但甲方的评价是关键筹码。先争取甲方负责人的书面认可，再找外包公司谈。'],
-      [/国企|央企|事业单位|编制|体制内/, '体制内薪资主要跟岗位等级、职称和绩效系数走。谈判重点放在“岗级晋升”“职称评定”“绩效系数”，而不是直接谈月薪数字。'],
-      [/倒挂|(同事|新人|新来的|新招的).{0,12}(比我高|比我多|工资高|薪资高|工资比我|薪资比我|开得比我)/, '你提到薪资倒挂：不要说出具体同事的名字和薪资。用“我了解到新入职的同级别岗位市场价在 __ 左右”来表达，把问题从“不公平”转化为“市场定价”。'],
+      [/国企|央企|事业单位|事业编|编制内|有编制|体制内|公务员/, '体制内薪资主要跟岗位等级、职称和绩效系数走。谈判重点放在“岗级晋升”“职称评定”“绩效系数”，而不是直接谈月薪数字。'],
+      [/倒挂|(同事|新人|新来的|新招的|新入职|应届生|校招生).{0,12}(工资|薪资|月薪|薪水|起薪|待遇|offer).{0,6}(比我|高于我)|(新人|新来的|新招的|新入职|应届生|校招生).{0,8}比我.{0,2}(高|多)|同事.{0,6}比我拿得多/, '你提到薪资倒挂：不要说出具体同事的名字和薪资。用“我了解到新入职的同级别岗位市场价在 __ 左右”来表达，把问题从“不公平”转化为“市场定价”。'],
       [/画饼|口头承诺|答应过|说好的/, '你提到老板以前有口头承诺：这次务必书面化。可以说：“上次您提到 __，这次我们能不能把具体时间和标准定下来？”'],
       [/房贷|车贷|结婚|生娃|生孩子|养娃|买房|家里.{0,4}(压力|开销|困难|缺钱)/, '你提到了个人生活压力：可以理解，但不要把它作为加薪理由——老板只为价值付钱。把它留在心里，作为你认真准备的动力。'],
       [/远程|异地|搬家|通勤/, '你提到了工作地点 / 通勤：如果现金空间有限，“远程 / 弹性工作”是一个高价值的交换条件。']

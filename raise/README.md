@@ -94,7 +94,7 @@ cd raise/server && npm ci --omit=dev
 NODE_ENV=production npm start     # 建议用 pm2 / systemd 守护
 ```
 
-- 用 Nginx 反向代理 https 并转发到 8787 端口，同时设置 `TRUST_PROXY=1`，否则 H5 支付拿不到用户的真实 IP。Nginx 中需要加上：
+- 用 Nginx 反向代理 https 并转发到 8787 端口，同时设置 `TRUST_PROXY=1`，否则 H5 支付拿不到用户的真实 IP。服务取 `X-Forwarded-For` 的最右一项作为用户 IP，所以代理必须追加（而不是透传）这个头。Nginx 中需要加上：
 
   ```nginx
   location / {

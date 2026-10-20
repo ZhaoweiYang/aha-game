@@ -42,13 +42,13 @@ class Store {
     fs.renameSync(tmp, this.file);
   }
 
-  // 已支付订单及其诊断永久保留；未支付的订单和诊断 7 天后清理
+  // 已支付订单永久保留；未支付的订单 7 天后清理；仍被订单引用的诊断不清理
   pruneExpired() {
     const now = Date.now();
     const keep = new Set();
     for (const [id, o] of Object.entries(this.data.orders)) {
-      if (o.status === 'paid') keep.add(o.previewId);
-      else if (now - o.createdAt > TTL_MS) delete this.data.orders[id];
+      if (o.status !== 'paid' && now - o.createdAt > TTL_MS) delete this.data.orders[id];
+      else keep.add(o.previewId);
     }
     for (const [id, p] of Object.entries(this.data.previews)) {
       if (now - p.createdAt > TTL_MS && !keep.has(id)) delete this.data.previews[id];

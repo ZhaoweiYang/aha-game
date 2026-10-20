@@ -111,3 +111,39 @@ test('补充情况规则不被成果用词误触发；成果结尾标点不重�
   const hit = JSON.stringify(Engine.buildReport({ extra: '公司在裁员，新来的同事工资比我高' }).sections.find((x) => x.id === 'extra'));
   assert.ok(hit.includes('裁员') && hit.includes('倒挂'));
 });
+
+test('补充情况关键词：真实表述能命中，成果 / 工作描述不误触发', () => {
+  const tipOf = (extra, o) => {
+    const sec = Engine.buildReport(Object.assign({ extra }, o || {})).sections.find((x) => x.id === 'extra');
+    return sec ? sec.blocks[0].items.join('|') : '';
+  };
+  const hits = {
+    '裁员': ['最近公司优化了一批人', '人员优化', '听说年底要优化人员', '身边好几个同事被毕业了', '今年降本增效，预算很紧', '大环境不好，到处都在降本'],
+    '倒挂': ['新人月薪比我还高', '同事比我拿得多', '新入职的员工工资比我高', '应届生起薪都比我高'],
+    '体制内': ['我是事业编，在医院工作', '在国企上班'],
+    '外部机会': ['我在面试别的公司', '最近面试了几家公司', '我想离职', '有猎头找我']
+  };
+  for (const [key, list] of Object.entries(hits)) for (const t of list) assert.ok(tipOf(t).includes(key), `${key} 应命中：${t}`);
+  const misses = ['我去年帮公司降本 80 万', '带领团队降本 30%', '优化了一批接口', '同事的工作量比我多', '负责编制年度预算和财务报表',
+    '我负责技术面试，面试了 40 个候选人', '团队离职率从 20% 降到 5%', '同事离职后我接手了他的工作'];
+  for (const t of misses) {
+    const tip = tipOf(t);
+    for (const key of ['裁员', '倒挂', '体制内', '外部机会']) assert.ok(!tip.includes(key), `不应命中 ${key}：${t}`);
+  }
+  // 低于现薪的 offer：补充建议与 BATNA 一致，不再说它是筹码
+  const low = tipOf('手上有个 offer，但不太想走', { salary: 20000, offer: 'has_offer', offerSalary: 15000 });
+  assert.ok(low.includes('不比现在的薪资高'));
+  const lowDims = Engine.analyze({ salary: 20000, offer: 'has_offer', offerSalary: 15000 }).dims;
+  const noneDims = Engine.analyze({ salary: 20000 }).dims;
+  assert.equal(lowDims.find((d) => d.key === 'market').value, noneDims.find((d) => d.key === 'market').value);
+});
+
+test('多行成果不出现重复标点；目标不高于期望与推荐区间', () => {
+  const r = JSON.stringify(Engine.buildReport({ achievementText: 'A 提升 12%。\nB 提升 15%。\n成果如下：\n' }));
+  assert.ok(!/[。；：][；。]/.test(r));
+  const a = Engine.analyze({ salary: 3000, expect: 20, companyStatus: 'fast' });
+  assert.ok(a.numbers.targetPct <= a.range.high, JSON.stringify(a.numbers));
+  assert.ok(a.numbers.expectNote.includes(String(a.numbers.targetPct)));
+  const b = Engine.analyze({ salary: 2000, expect: 10 });
+  assert.ok(b.numbers.targetPct <= 10, JSON.stringify(b.numbers));
+});

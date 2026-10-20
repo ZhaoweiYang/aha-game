@@ -110,6 +110,31 @@ test('同一订单反复反馈只计一次', async () => {
   assert.equal(store.data.stats['auto|junior'].helped, 0);
 });
 
+test('诊断记录被清理后，已下单的订单仍能支付并拿到方案', async () => {
+  const { store } = require('../server.js');
+  const pv = await (await post('/api/preview', { input: { industry: 'pharma', salary: 22000 } })).json();
+  const o = await (await post('/api/order', { previewId: pv.previewId, channel: 'mock' })).json();
+  // 诊断已超过 7 天、订单刚创建：清理时诊断应被保留；即使被删，订单也有自己的问卷快照
+  store.data.previews[pv.previewId].createdAt -= 8 * 24 * 3600 * 1000;
+  store.pruneExpired();
+  assert.ok(store.get('previews', pv.previewId));
+  delete store.data.previews[pv.previewId];
+  assert.equal((await post('/api/pay/mock/confirm', { orderId: o.orderId })).status, 200);
+  const r = await fetch(base + '/api/report/' + o.orderId);
+  assert.equal(r.status, 200);
+  assert.equal((await r.json()).report.summary.salary, 22000);
+  assert.equal((await post('/api/outcome', { orderId: o.orderId, result: 'success' })).status, 200);
+  // 未支付且超过 7 天的订单会被清理
+  const pv2 = await (await post('/api/preview', { input: {} })).json();
+  const o2 = await (await post('/api/order', { previewId: pv2.previewId, channel: 'mock' })).json();
+  store.data.orders[o2.orderId].createdAt -= 8 * 24 * 3600 * 1000;
+  store.data.previews[pv2.previewId].createdAt -= 8 * 24 * 3600 * 1000;
+  store.pruneExpired();
+  assert.equal(store.get('orders', o2.orderId), undefined);
+  assert.equal(store.get('previews', pv2.previewId), undefined);
+  assert.ok(store.get('orders', o.orderId));
+});
+
 test('参数校验', async () => {
   assert.equal((await post('/api/order', { previewId: 'nope' })).status, 404);
   assert.equal((await fetch(base + '/api/report/Rdeadbeef')).status, 404);
