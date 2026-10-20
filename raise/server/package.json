@@ -1,0 +1,17 @@
+{
+  "name": "raise-coach-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "涨薪军师 H5 后端：诊断、下单、微信支付、方案生成、AI 定制",
+  "main": "server.js",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=22.9"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.135.0"
+  }
+}
