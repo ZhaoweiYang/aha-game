@@ -1,0 +1,7 @@
+{
+  "_说明": "复制为 stats-baseline.json 生效。只填写真实、可追溯的历史数据（如内测期用户反馈），会与线上统计相加后展示。key 为 行业|职级，取值见 js/schema.js。",
+  "totalHelped": 0,
+  "segments": {
+    "internet|mid": { "helped": 0, "generated": 0 }
+  }
+}

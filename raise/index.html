@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="format-detection" content="telephone=no">
+  <meta name="description" content="输入你的情况，3 分钟生成专属涨薪谈判方案：成功率诊断、精确报价、面谈脚本、老板反驳应对。基于哈佛原则式谈判与 FBI 谈判技巧。">
+  <meta name="theme-color" content="#1d2a6b">
+  <title>涨薪军师 · 专属涨薪谈判方案</title>
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div class="app" id="app">
+
+  <!-- 首页 -->
+  <section class="screen active" id="s-home">
+    <div class="home-hero">
+      <div class="brand"><span class="brand-mark">薪</span>涨薪军师</div>
+      <h1>和老板谈涨薪，<br>别再靠“硬着头皮”</h1>
+      <p class="lead">回答几个问题，3 分钟生成你的专属谈判方案：<br>成功率诊断 · 精确报价 · 逐句面谈脚本 · 老板反驳应对</p>
+      <button class="btn btn-primary btn-lg" data-action="start">免费测一测我的涨薪成功率</button>
+      <p class="hint">约 3 分钟 · 先看诊断结果，满意再解锁完整方案</p>
+      <button class="link-btn hidden" id="myReportBtn" data-action="my-report">查看我已购买的方案 →</button>
+    </div>
+
+    <div class="home-block">
+      <h2>方案背后的方法论</h2>
+      <div class="method-grid">
+        <div class="method"><b>哈佛原则式谈判</b><span>BATNA 底牌分析 · 用客观标准代替讨价还价</span></div>
+        <div class="method"><b>FBI 谈判技巧</b><span>前 FBI 首席人质谈判专家 Chris Voss：镜像、标注、校准问题</span></div>
+        <div class="method"><b>精确锚点研究</b><span>哥伦比亚商学院：精确数字报价，对方还价更少</span></div>
+        <div class="method"><b>调薪大数据</b><span>PayScale 16 万人调研 + 前程无忧 2025 行业调薪数据</span></div>
+      </div>
+    </div>
+
+    <div class="home-block">
+      <h2>你会得到</h2>
+      <ol class="get-list">
+        <li><b>局势诊断</b>筹码五维评分，看清你的加分项与风险项</li>
+        <li><b>三个数字</b>开价锚点 / 理想目标 / 心理底线 + 让步阶梯</li>
+        <li><b>开口时机</b>什么时候谈、什么时候绝对别谈</li>
+        <li><b>面谈脚本</b>按你老板的性格定制，逐句可照读</li>
+        <li><b>反驳应对</b>“没预算”“等年底”“你要太多了”… 10 种回法</li>
+        <li><b>Plan B</b>钱谈不拢时，还能争取什么</li>
+        <li><b>模板</b>约谈话术、一页纸价值清单、确认邮件</li>
+      </ol>
+    </div>
+
+    <div class="home-block stat-strip">
+      <div><b>70%</b><span>主动要求加薪的人获得了涨薪</span></div>
+      <div><b>4.1%</b><span>2025 年企业整体平均调薪幅度</span></div>
+    </div>
+    <p class="source-note">数据来源：PayScale《Raise Anatomy》（2018，约 16 万人）；前程无忧《2026 离职与调薪调研报告》</p>
+    <div class="home-cta"><button class="btn btn-primary btn-lg" data-action="start">开始测评</button></div>
+  </section>
+
+  <!-- 问卷 -->
+  <section class="screen" id="s-form">
+    <header class="form-head">
+      <button class="icon-btn" data-action="prev" aria-label="上一步">‹</button>
+      <div class="progress"><div class="progress-bar" id="progressBar"></div></div>
+      <span class="step-count" id="stepCount">1/5</span>
+    </header>
+    <div class="form-body" id="formBody"></div>
+    <footer class="form-foot">
+      <p class="privacy">🔒 你的信息仅用于生成方案，不会对外展示或出售</p>
+      <button class="btn btn-primary btn-block" data-action="next" id="nextBtn">下一步</button>
+    </footer>
+  </section>
+
+  <!-- 分析中 -->
+  <section class="screen" id="s-loading">
+    <div class="loading-wrap">
+      <div class="spinner" aria-hidden="true"></div>
+      <h2>正在生成你的涨薪诊断</h2>
+      <ul class="loading-steps" id="loadingSteps">
+        <li>对比同行业、同职级调薪数据</li>
+        <li>评估你的筹码五维</li>
+        <li>计算成功率与可争取幅度</li>
+        <li>匹配老板性格与谈判策略</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 付费页 -->
+  <section class="screen" id="s-pay">
+    <div class="pay-wrap" id="payBody"></div>
+    <div class="pay-bar">
+      <div class="price-box">
+        <span class="price-now" id="priceNow">¥29.9</span>
+        <span class="price-old" id="priceOld">¥99</span>
+      </div>
+      <button class="btn btn-gold" data-action="pay" id="payBtn">解锁完整方案</button>
+    </div>
+  </section>
+
+  <!-- 方案 -->
+  <section class="screen" id="s-report">
+    <header class="report-head">
+      <div class="brand small"><span class="brand-mark">薪</span>你的专属涨薪方案</div>
+      <nav class="report-nav" id="reportNav"></nav>
+    </header>
+    <div class="report-body" id="reportBody"></div>
+  </section>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <div class="modal hidden" id="modal" role="dialog" aria-modal="true">
+    <div class="modal-card" id="modalCard"></div>
+  </div>
+</div>
+
+<script src="js/config.js"></script>
+<script src="js/schema.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
